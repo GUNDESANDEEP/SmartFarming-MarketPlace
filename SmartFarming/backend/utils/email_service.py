@@ -348,7 +348,7 @@ class EmailService:
     
     @staticmethod
     def _send_email(recipient_email, subject, html_body, plain_body=None):
-        """Internal method to send email via SMTP (Gmail).
+        """Internal method to send email via SMTP (Gmail) asynchronously.
         
         Uses smtplib with STARTTLS for secure email delivery.
         """
@@ -368,15 +368,21 @@ class EmailService:
             msg.attach(MIMEText(plain_body, 'plain'))
             msg.attach(MIMEText(html_body, 'html'))
             
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                server.starttls()
-                server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-                server.send_message(msg)
+            import threading
+            def send_async():
+                try:
+                    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+                        server.starttls()
+                        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+                        server.send_message(msg)
+                    print(f"[OK] Email sent via SMTP to {recipient_email}")
+                except Exception as e:
+                    print(f"[ERROR] SMTP email failed for {recipient_email}: {e}")
             
-            print(f"[OK] Email sent via SMTP to {recipient_email}")
+            threading.Thread(target=send_async, daemon=True).start()
             return True
         except Exception as e:
-            print(f"[ERROR] SMTP email failed for {recipient_email}: {e}")
+            print(f"[ERROR] Failed to start async email thread: {e}")
             return False
 
 

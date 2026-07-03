@@ -247,6 +247,7 @@ async def resend_otp(request: Request):
         if user['is_verified']:
             return JSONResponse(status_code=400, content={'error': 'Email already verified'})
         otp_code = generate_otp()
+        print(f"[OTP] Generated verification OTP for {email}: {otp_code}")
         OTP.create(email=email, otp_code=otp_code, purpose='email_verification')
         email_body = _build_otp_html('Your email verification OTP is:', otp_code)
         email_sent = send_email(email, 'SmartFarm - Email Verification OTP', email_body)
@@ -299,6 +300,7 @@ async def send_login_otp(request: Request):
 
             # Generate and store new OTP
             otp_code = generate_otp()
+            print(f"[OTP] Generated login/signup OTP for {email}: {otp_code}")
             now = datetime.now()
             expires_at = now + timedelta(minutes=5)
             BaseModel.execute_insert(
