@@ -1056,12 +1056,19 @@ const AdminNotifications = () => {
     try {
       const res = await adminAPI.getUsers({});
       const data = res.data;
-      const users = Array.isArray(data) ? data : [...(data.farmers || []), ...(data.buyers || []), ...(data.users || [])];
+      const users = Array.isArray(data)
+        ? data
+        : [
+            ...(data.farmers || []).map((f) => ({ ...f, role: f.role || 'farmer' })),
+            ...(data.buyers || []).map((b) => ({ ...b, role: b.role || 'buyer' })),
+            ...(data.users || []),
+          ];
       const deletedIds = (() => { try { return JSON.parse(localStorage.getItem('admin_deleted_users') || '[]'); } catch { return []; } })();
-      const active = users.filter(u => !deletedIds.includes(u._id || u.id));
+      const active = users.filter(u => !deletedIds.includes(u._id || u.id || u.farmer_id || u.buyer_id || u.user_id));
       setFarmerCount(active.filter(u => (u.role || '').toLowerCase() === 'farmer').length);
       setBuyerCount(active.filter(u => (u.role || '').toLowerCase() === 'buyer').length);
-    } catch {
+    } catch (err) {
+      console.error('Error loading user counts:', err);
       setFarmerCount(0);
       setBuyerCount(0);
     }
