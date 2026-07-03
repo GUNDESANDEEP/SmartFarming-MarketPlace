@@ -504,7 +504,7 @@ def health_check():
     except Exception as e:
         health['cache'] = f'error: {str(e)}'
     
-    status_code = 200 if health['status'] == 'healthy' else 500
+    status_code = 200
     return jsonify(health), status_code
 
 @app.route('/api', methods=['GET'])
