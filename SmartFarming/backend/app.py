@@ -1,0 +1,586 @@
+"""
+Smart Farmer Marketplace - Flask Backend
+Platform: Render.com + Neon PostgreSQL + Redis Cloud
+Single entry point. Consolidated blueprints.
+"""
+
+# Fix Windows console encoding for emoji characters (prevents 'charmap' codec errors)
+import sys, os
+if sys.platform == 'win32':
+    os.environ['PYTHONUTF8'] = '1'
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
+from dotenv import load_dotenv
+import os
+import time
+import psycopg2
+from psycopg2 import pool
+from psycopg2.extras import RealDictCursor
+from datetime import timedelta
+
+load_dotenv()
+
+app = Flask(__name__)
+
+# ============================================================================
+# DATABASE CONFIG (Neon PostgreSQL)
+# ============================================================================
+DATABASE_URL = os.getenv('DATABASE_URL', '')
+
+# Build DATABASE_URL from individual vars if not provided
+if not DATABASE_URL:
+    db_host = os.getenv('DB_HOST', 'localhost')
+    db_port = os.getenv('DB_PORT', '5432')
+    db_user = os.getenv('DB_USER', 'postgres')
+    db_password = os.getenv('DB_PASSWORD', '')
+    db_name = os.getenv('DB_NAME', 'smartfarmingdb')
+    DATABASE_URL = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    if db_host and 'neon.tech' in db_host:
+        DATABASE_URL += "?sslmode=require"
+
+# Connection Pool with keepalive for remote PostgreSQL (Render/Neon)
+try:
+    db_pool = psycopg2.pool.ThreadedConnectionPool(
+        minconn=5,
+        maxconn=10,
+        dsn=DATABASE_URL,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5,
+        connect_timeout=10,
+        options='-c statement_timeout=30000'
+    )
+    print(f"[OK] PostgreSQL connection pool created (Neon)")
+    # Warmup: validate a connection immediately to prevent first-request failures
+    try:
+        warmup_conn = db_pool.getconn()
+        warmup_cur = warmup_conn.cursor()
+        warmup_cur.execute('SELECT 1')
+        warmup_cur.close()
+        db_pool.putconn(warmup_conn)
+        print(f"[OK] Database warmup successful")
+    except Exception as warmup_err:
+        print(f"[WARN] Database warmup failed (will retry on first request): {warmup_err}")
+except Exception as e:
+    print(f"[ERR] PostgreSQL pool creation failed: {e}")
+    db_pool = None
+
+def recreate_db_pool():
+    """Recreate the database connection pool if all connections become stale.
+    Called by models.py when retries are exhausted."""
+    global db_pool
+    try:
+        if db_pool:
+            try:
+                db_pool.closeall()
+            except Exception:
+                pass
+        db_pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=5, maxconn=10, dsn=DATABASE_URL,
+            keepalives=1, keepalives_idle=30, keepalives_interval=10,
+            keepalives_count=5, connect_timeout=10,
+            options='-c statement_timeout=30000'
+        )
+        from models.models import set_db_pool
+        set_db_pool(db_pool)
+        print(f"[OK] Database pool recreated successfully")
+        return True
+    except Exception as e:
+        print(f"[ERR] Database pool recreation failed: {e}")
+        return False
+
+app.config['DATABASE_URL'] = DATABASE_URL
+
+# ============================================================================
+# REDIS CONFIG (Redis Cloud)
+# ============================================================================
+redis_client = None
+try:
+    import redis as redis_lib
+    redis_url = os.getenv('REDIS_URL', '')
+    if redis_url:
+        redis_client = redis_lib.from_url(redis_url, decode_responses=True)
+        redis_client.ping()
+        print(f"[OK] Redis Cloud connected")
+    else:
+        redis_host = os.getenv('REDIS_HOST', 'localhost')
+        redis_port = int(os.getenv('REDIS_PORT', 6379))
+        redis_password = os.getenv('REDIS_PASSWORD', '')
+        redis_client = redis_lib.Redis(
+            host=redis_host, port=redis_port,
+            password=redis_password if redis_password else None,
+            decode_responses=True
+        )
+        redis_client.ping()
+        print(f"[OK] Redis connected ({redis_host}:{redis_port})")
+except Exception as e:
+    print(f"[WARN] Redis not available: {e} - caching disabled")
+    redis_client = None
+
+app.config['REDIS_CLIENT'] = redis_client
+
+# ============================================================================
+# JWT CONFIG
+# ============================================================================
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'change-me-in-production')
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'change-me-in-production')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=7)
+app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=30)
+
+# ============================================================================
+# INIT EXTENSIONS
+# ============================================================================
+jwt = JWTManager(app)
+
+# CORS - Manual implementation (Flask-CORS 4.0.0 has bugs with Flask 3.x)
+cors_origins = os.getenv('CORS_ORIGINS', '*')
+if cors_origins == '*':
+    allowed_origins = ["*"]
+else:
+    allowed_origins = [o.strip() for o in cors_origins.split(',')]
+    for port in ["3000", "3001", "3002"]:
+        origin = f"http://localhost:{port}"
+        if origin not in allowed_origins:
+            allowed_origins.append(origin)
+    frontend_url = os.getenv('FRONTEND_URL', '')
+    if frontend_url and frontend_url not in allowed_origins:
+        allowed_origins.append(frontend_url)
+
+print(f"[OK] CORS allowed origins: {allowed_origins}")
+
+# Global catch-all for CORS preflight OPTIONS requests
+# This MUST run before any route matching to prevent 404 on OPTIONS
+@app.before_request
+def handle_options_preflight():
+    if request.method == 'OPTIONS':
+        origin = request.headers.get('Origin', '*')
+        response = app.make_default_options_response()
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Max-Age'] = '3600'
+        return response
+
+# CORS headers for actual responses are added in add_security_headers below
+
+# Pass DB pool to models
+from models.models import set_db_pool
+set_db_pool(db_pool)
+
+# ============================================================================
+# RATE LIMITING
+# ============================================================================
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+
+    if redis_client:
+        limiter = Limiter(
+            get_remote_address,
+            app=app,
+            storage_uri=os.getenv('REDIS_URL', 'memory://'),
+            default_limits=["200 per day", "50 per hour"]
+        )
+    else:
+        limiter = Limiter(
+            get_remote_address,
+            app=app,
+            storage_uri="memory://",
+            default_limits=["200 per day", "50 per hour"]
+        )
+    print("[OK] Rate limiting enabled")
+except ImportError:
+    limiter = None
+    print("[SKIP] flask-limiter not installed")
+
+app.config['LIMITER'] = limiter
+
+# ============================================================================
+# CLOUDINARY CONFIG
+# ============================================================================
+try:
+    import cloudinary
+    cloudinary.config(
+        cloud_name=os.getenv('CLOUDINARY_CLOUD_NAME'),
+        api_key=os.getenv('CLOUDINARY_API_KEY'),
+        api_secret=os.getenv('CLOUDINARY_API_SECRET')
+    )
+    print("[OK] Cloudinary configured")
+except ImportError:
+    print("[SKIP] cloudinary not installed")
+
+# ============================================================================
+# TWILIO SMS CONFIG
+# ============================================================================
+twilio_client = None
+try:
+    from twilio.rest import Client as TwilioClient
+    sid = os.getenv('TWILIO_ACCOUNT_SID')
+    token = os.getenv('TWILIO_AUTH_TOKEN')
+    if sid and token:
+        twilio_client = TwilioClient(sid, token)
+        app.config['TWILIO_PHONE'] = os.getenv('TWILIO_PHONE_NUMBER')
+        print("[OK] Twilio SMS configured")
+    else:
+        print("[SKIP] Twilio credentials not set")
+except ImportError:
+    print("[SKIP] twilio not installed")
+
+# ============================================================================
+# EMAIL (SMTP - Gmail) CONFIG - MANDATORY
+# ============================================================================
+app.config['SMTP_HOST'] = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+app.config['SMTP_PORT'] = int(os.getenv('SMTP_PORT', '587'))
+app.config['EMAIL_SENDER'] = os.getenv('EMAIL_SENDER', '')
+app.config['EMAIL_FROM_NAME'] = os.getenv('EMAIL_FROM_NAME', 'SmartFarming')
+
+if app.config['EMAIL_SENDER'] and os.getenv('EMAIL_PASSWORD'):
+    print(f"[OK] SMTP email configured - From: {app.config['EMAIL_FROM_NAME']} <{app.config['EMAIL_SENDER']}>")
+else:
+    error_msg = (
+        f"\n{'='*60}\n"
+        f"  ❌ FATAL: SMTP EMAIL CONFIG IS MANDATORY\n"
+        f"{'='*60}\n"
+        f"  Missing: EMAIL_SENDER or EMAIL_PASSWORD\n"
+        f"  The application cannot start without email credentials.\n"
+        f"  Set SMTP_HOST, SMTP_PORT, EMAIL_SENDER, EMAIL_PASSWORD in .env\n"
+        f"{'='*60}\n"
+    )
+    print(error_msg)
+    raise RuntimeError("SMTP configuration is mandatory. Missing: EMAIL_SENDER or EMAIL_PASSWORD")
+
+# ============================================================================
+# WEATHER API CONFIG
+# ============================================================================
+app.config['WEATHER_API_KEY'] = os.getenv('WEATHER_API_KEY')
+if app.config['WEATHER_API_KEY']:
+    print("[OK] Weather API configured")
+
+# ============================================================================
+# GOOGLE MAPS CONFIG
+# ============================================================================
+app.config['GOOGLE_MAPS_API_KEY'] = os.getenv('GOOGLE_MAPS_API_KEY')
+if app.config['GOOGLE_MAPS_API_KEY']:
+    print("[OK] Google Maps configured")
+
+# ============================================================================
+# SOCKET.IO (optional)
+# ============================================================================
+socketio = None
+try:
+    from flask_socketio import SocketIO
+    socketio = SocketIO(app, cors_allowed_origins="*")
+    from socket_events import register_socketio
+    register_socketio(app)
+    print("[OK] Socket.IO initialized")
+except ImportError:
+    print("[SKIP] flask-socketio not installed, real-time features disabled")
+except Exception as e:
+    print(f"[SKIP] Socket.IO init failed: {e}")
+
+# ============================================================================
+# REGISTER BLUEPRINTS
+# ============================================================================
+blueprints_registered = []
+
+try:
+    from routes.auth import auth_bp
+    app.register_blueprint(auth_bp)
+    blueprints_registered.append(f"auth_bp -> {auth_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] auth: {e}")
+
+try:
+    from routes.farmer_products import farmer_bp
+    app.register_blueprint(farmer_bp)
+    blueprints_registered.append(f"farmer_bp -> {farmer_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] farmer: {e}")
+
+try:
+    from routes.buyer_products import buyer_bp
+    app.register_blueprint(buyer_bp)
+    blueprints_registered.append(f"buyer_bp -> {buyer_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] buyer: {e}")
+
+try:
+    from routes.admin import admin_bp
+    app.register_blueprint(admin_bp)
+    blueprints_registered.append(f"admin_bp -> {admin_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] admin: {e}")
+
+try:
+    from routes.messages import messages_bp
+    app.register_blueprint(messages_bp)
+    blueprints_registered.append(f"messages_bp -> {messages_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] messages: {e}")
+
+try:
+    from routes.payments import payments_bp
+    app.register_blueprint(payments_bp, url_prefix='/api/payments')
+    blueprints_registered.append(f"payments_bp -> /api/payments")
+except Exception as e:
+    print(f"[ERR] payments: {e}")
+
+try:
+    from routes.agribot import agribot_bp
+    app.register_blueprint(agribot_bp)
+    blueprints_registered.append(f"agribot_bp -> {agribot_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] agribot: {e}")
+
+try:
+    from routes.weather import weather_bp
+    app.register_blueprint(weather_bp)
+    blueprints_registered.append(f"weather_bp -> {weather_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] weather: {e}")
+
+try:
+    from routes.order_flow import order_flow_bp
+    app.register_blueprint(order_flow_bp)
+    blueprints_registered.append(f"order_flow_bp -> {order_flow_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] order_flow: {e}")
+
+try:
+    from routes.saas_dashboard import saas_dashboard_bp
+    app.register_blueprint(saas_dashboard_bp)
+    blueprints_registered.append(f"saas_dashboard_bp -> {saas_dashboard_bp.url_prefix}")
+except Exception as e:
+    print(f"[ERR] saas_dashboard: {e}")
+
+try:
+    from routes.premium import premium_bp
+    app.register_blueprint(premium_bp, url_prefix='/api/premium')
+    blueprints_registered.append(f"premium_bp -> /api/premium")
+except Exception as e:
+    print(f"[ERR] premium: {e}")
+
+# ============================================================================
+# ERROR HANDLERS
+# ============================================================================
+
+@app.errorhandler(400)
+def bad_request(error):
+    return jsonify({'error': 'Bad Request', 'message': str(error)}), 400
+
+@app.errorhandler(401)
+def unauthorized(error):
+    return jsonify({'error': 'Unauthorized', 'message': 'Authentication required'}), 401
+
+@app.errorhandler(403)
+def forbidden(error):
+    return jsonify({'error': 'Forbidden', 'message': 'Permission denied'}), 403
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not Found', 'message': 'Resource not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Internal Server Error', 'message': 'Something went wrong'}), 500
+
+# ============================================================================
+# JWT ERROR HANDLERS
+# ============================================================================
+
+@jwt.expired_token_loader
+def expired_token_callback(jwt_header, jwt_data):
+    return jsonify({
+        'error': 'token_expired',
+        'message': 'Your session has expired. Please login again.'
+    }), 401
+
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    return jsonify({
+        'error': 'token_invalid',
+        'message': 'Invalid authentication token.'
+    }), 401
+
+@jwt.unauthorized_loader
+def missing_token_callback(error):
+    return jsonify({
+        'error': 'token_missing',
+        'message': 'Authentication token is required.'
+    }), 401
+
+@jwt.revoked_token_loader
+def revoked_token_callback(jwt_header, jwt_data):
+    return jsonify({
+        'error': 'token_revoked',
+        'message': 'This token has been revoked.'
+    }), 401
+
+# ============================================================================
+# REQUEST LOGGING MIDDLEWARE
+# ============================================================================
+
+@app.before_request
+def log_request_start():
+    """Record request start time for performance logging"""
+    request._start_time = time.time()
+
+@app.after_request
+def log_request_timing(response):
+    """Log request method, path, status, and duration in ms"""
+    duration_ms = (time.time() - getattr(request, '_start_time', time.time())) * 1000
+    path = request.path
+    # Skip noisy health checks and OPTIONS preflight
+    if '/health' not in path and request.method != 'OPTIONS':
+        status = response.status_code
+        level = 'SLOW' if duration_ms > 2000 else 'REQ'
+        print(f"[{level}] {request.method} {path} -> {status} ({duration_ms:.0f}ms)")
+    return response
+
+# ============================================================================
+# SECURITY HEADERS
+# ============================================================================
+
+@app.after_request
+def add_security_headers(response):
+    # Security headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    # CORS headers (added here because this handler is proven to execute)
+    origin = request.headers.get('Origin', '')
+    if origin:
+        response.headers['Access-Control-Allow-Origin'] = origin
+    else:
+        response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    return response
+
+# ============================================================================
+# HEALTH CHECK
+# ============================================================================
+
+@app.route('/health', methods=['GET'])
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    health = {'status': 'healthy'}
+    
+    # Check PostgreSQL
+    try:
+        if db_pool:
+            conn = db_pool.getconn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            db_pool.putconn(conn)
+            health['database'] = 'connected'
+        else:
+            health['database'] = 'no pool'
+    except Exception as e:
+        health['database'] = f'error: {str(e)}'
+        health['status'] = 'degraded'
+    
+    # Check Redis
+    try:
+        if redis_client:
+            redis_client.ping()
+            health['cache'] = 'connected'
+        else:
+            health['cache'] = 'disabled'
+    except Exception as e:
+        health['cache'] = f'error: {str(e)}'
+    
+    status_code = 200 if health['status'] == 'healthy' else 500
+    return jsonify(health), status_code
+
+@app.route('/api', methods=['GET'])
+def api_info():
+    return jsonify({
+        'name': 'Smart Farmer Marketplace API',
+        'version': '2.0.0',
+        'platform': 'Render.com + Neon PostgreSQL + Redis Cloud',
+        'blueprints': blueprints_registered,
+        'endpoints': {
+            'auth': '/api/auth',
+            'farmer': '/api/farmer',
+            'buyer': '/api/buyer',
+            'admin': '/api/admin',
+            'messages': '/api/messages',
+            'payments': '/api/payments',
+            'weather': '/api/weather',
+            'agribot': '/api/agribot',
+            'upload': '/api/upload'
+        }
+    }), 200
+
+# ============================================================================
+# IMAGE UPLOAD (Cloudinary)
+# ============================================================================
+
+@app.route('/api/upload', methods=['POST'])
+@jwt_required()
+def upload_image():
+    """Upload image to Cloudinary"""
+    try:
+        import cloudinary.uploader
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image file provided'}), 400
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        folder = request.form.get('folder', 'smartfarm')
+        result = cloudinary.uploader.upload(file, folder=folder)
+        return jsonify({
+            'success': True,
+            'url': result['secure_url'],
+            'public_id': result['public_id'],
+            'width': result.get('width'),
+            'height': result.get('height'),
+        }), 200
+    except ImportError:
+        return jsonify({'error': 'Cloudinary not configured'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# STARTUP
+# ============================================================================
+
+if __name__ == '__main__':
+    port = int(os.getenv('PORT', 8000))
+    debug = os.getenv('FLASK_ENV') == 'development'
+    
+    print(f"""
+    ============================================
+    Smart Farmer Marketplace v2.0
+    Platform: Render.com + Neon PostgreSQL
+    ============================================
+    Database: Neon PostgreSQL
+    Cache: {'Redis Cloud' if redis_client else 'Disabled'}
+    Port: {port}
+    Blueprints: {len(blueprints_registered)}
+    """)
+    for bp in blueprints_registered:
+        print(f"    [OK] {bp}")
+    print(f"""
+    ============================================
+    """)
+    
+    if socketio:
+        socketio.run(app, host='0.0.0.0', port=port, debug=debug)
+    else:
+        app.run(host='0.0.0.0', port=port, debug=debug)
