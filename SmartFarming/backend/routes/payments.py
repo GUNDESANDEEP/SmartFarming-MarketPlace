@@ -555,9 +555,14 @@ async def get_receipt(receipt_id):
                       f.first_name AS farmer_first_name, f.last_name AS farmer_last_name,
                       f.email AS farmer_email, f.phone AS farmer_phone,
                       b.first_name AS buyer_first_name, b.last_name AS buyer_last_name,
-                      b.email AS buyer_email_db, b.phone AS buyer_phone_db
+                      b.email AS buyer_email_db, b.phone AS buyer_phone_db,
+                      fo.first_name AS order_farmer_first, fo.last_name AS order_farmer_last,
+                      fo.email AS order_farmer_email, fo.phone AS order_farmer_phone
                FROM receipts r
+               LEFT JOIN payments p ON r.payment_id = p.id
+               LEFT JOIN orders o ON p.order_id = o.id
                LEFT JOIN farmers f ON r.farmer_id = f.id
+               LEFT JOIN farmers fo ON o.farmer_id = fo.id
                LEFT JOIN buyers b ON r.buyer_id = b.id
                WHERE r.receipt_id = %s""",
             (receipt_id,), fetch_one=True
@@ -574,17 +579,17 @@ async def get_receipt(receipt_id):
 
         receipt_data = _serialize_row(receipt)
         
-        # Format farmer name & info
-        farmer_first = receipt.get('farmer_first_name') or ''
-        farmer_last = receipt.get('farmer_last_name') or ''
-        receipt_data['farmer_name'] = f"{farmer_first} {farmer_last}".strip() or 'N/A'
-        receipt_data['farmer_phone'] = receipt.get('farmer_phone') or 'N/A'
-        receipt_data['farmer_email'] = receipt.get('farmer_email') or 'N/A'
+        # Format farmer name & info with fallback
+        farmer_first = receipt.get('farmer_first_name') or receipt.get('order_farmer_first') or ''
+        farmer_last = receipt.get('farmer_last_name') or receipt.get('order_farmer_last') or ''
+        receipt_data['farmer_name'] = f"{farmer_first} {farmer_last}".strip() or 'SmartFarm'
+        receipt_data['farmer_phone'] = receipt.get('farmer_phone') or receipt.get('order_farmer_phone') or 'N/A'
+        receipt_data['farmer_email'] = receipt.get('farmer_email') or receipt.get('order_farmer_email') or 'N/A'
         
         # Format buyer name & info fallbacks
         buyer_first = receipt.get('buyer_first_name') or ''
         buyer_last = receipt.get('buyer_last_name') or ''
-        receipt_data['buyer_name'] = receipt.get('buyer_name') or f"{buyer_first} {buyer_last}".strip() or 'N/A'
+        receipt_data['buyer_name'] = receipt.get('buyer_name') or f"{buyer_first} {buyer_last}".strip() or 'Guest Buyer'
         receipt_data['buyer_phone'] = receipt.get('buyer_phone') or receipt.get('buyer_phone_db') or 'N/A'
         receipt_data['buyer_email'] = receipt.get('buyer_email') or receipt.get('buyer_email_db') or 'N/A'
         

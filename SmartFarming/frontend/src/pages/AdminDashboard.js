@@ -636,6 +636,8 @@ const AdminReceipts = () => {
 
   useEffect(() => {
     fetchReceipts();
+    const interval = setInterval(fetchReceipts, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchReceipts = async () => {
@@ -664,7 +666,13 @@ const AdminReceipts = () => {
 
   return (
     <div className="dashboard-section">
-      <h2 style={{ color: '#14532d', marginBottom: '20px' }}> All Receipts</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h2 style={{ color: '#14532d', margin: 0 }}> All Receipts</h2>
+        <span style={{
+          fontSize: '0.7rem', fontWeight: 600, padding: '4px 10px',
+          borderRadius: '20px', background: '#f0fdf4', color: '#166534',
+        }}>Auto-refreshes every 30s</span>
+      </div>
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: '#888' }}>Loading receipts...</div>

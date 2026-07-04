@@ -687,8 +687,16 @@ async def get_all_receipts(request: Request, user_id: str = Depends(get_current_
                     r.grand_total,
                     r.payment_type,
                     r.created_at,
-                    COALESCE(r.buyer_name, CONCAT(b.first_name, ' ', b.last_name)) as buyer_name,
-                    COALESCE(NULLIF(TRIM(CONCAT(f.first_name, ' ', f.last_name)), ''), 'N/A') as farmer_name,
+                    COALESCE(
+                        NULLIF(TRIM(r.buyer_name), ''),
+                        NULLIF(TRIM(CONCAT(b.first_name, ' ', b.last_name)), ''),
+                        'Guest Buyer'
+                    ) as buyer_name,
+                    COALESCE(
+                        NULLIF(TRIM(CONCAT(f.first_name, ' ', f.last_name)), ''),
+                        NULLIF(TRIM(CONCAT(fo.first_name, ' ', fo.last_name)), ''),
+                        'SmartFarm'
+                    ) as farmer_name,
                     COALESCE(
                         (SELECT STRING_AGG(ri.product_name, ', ') FROM receipt_items ri WHERE ri.receipt_id = r.id),
                         'N/A'
@@ -698,7 +706,10 @@ async def get_all_receipts(request: Request, user_id: str = Depends(get_current_
                         0
                     ) as quantity_kg
                    FROM receipts r
+                   LEFT JOIN payments p ON r.payment_id = p.id
+                   LEFT JOIN orders o ON p.order_id = o.id
                    LEFT JOIN farmers f ON r.farmer_id = f.id
+                   LEFT JOIN farmers fo ON o.farmer_id = fo.id
                    LEFT JOIN buyers b ON r.buyer_id = b.id
                    ORDER BY r.created_at DESC LIMIT %s OFFSET %s""",
                 (limit, offset), fetch_all=True
