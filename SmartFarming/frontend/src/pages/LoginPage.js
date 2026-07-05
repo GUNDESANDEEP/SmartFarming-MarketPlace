@@ -77,9 +77,16 @@ const LoginPage = () => {
       if (userType === 'farmer') {
         response = await authAPI.farmerLogin(formData.email, formData.password);
       } else if (userType === 'buyer') {
-        response = await authAPI.buyerLogin(formData.phone, formData.password);
-      } else {
-        response = await authAPI.adminLogin(formData.email, formData.password);
+        // Detect if input is an email (admin) or phone (buyer)
+        const input = (formData.phone || '').trim();
+        const isEmail = input.includes('@');
+        if (isEmail) {
+          // Admin credentials entered on Buyer tab → admin login
+          response = await authAPI.adminLogin(input, formData.password);
+        } else {
+          // Regular buyer login with phone
+          response = await authAPI.buyerLogin(input, formData.password);
+        }
       }
 
       const data = response.data;
@@ -191,7 +198,7 @@ const LoginPage = () => {
           {/* Avatar Circle */}
           <div className="auth-avatar">
             <div className="avatar-circle">
-              {userType === 'farmer' ? '👨‍🌾' : userType === 'buyer' ? '🛒' : '🛡️'}
+              {userType === 'farmer' ? '👨‍🌾' : '🛒'}
             </div>
           </div>
 
@@ -210,13 +217,6 @@ const LoginPage = () => {
               type="button"
             >
               <FiUser size={14} /> Buyer
-            </button>
-            <button
-              className={`role-tab ${userType === 'admin' ? 'active' : ''}`}
-              onClick={() => setUserType('admin')}
-              type="button"
-            >
-              <FiShield size={14} /> Admin
             </button>
           </div>
 
@@ -265,11 +265,15 @@ const LoginPage = () => {
           <form onSubmit={handleSubmit} className="auth-form">
             {userType === 'buyer' ? (
               <div className="glass-input">
-                <FiPhone className="input-icon" />
+                {formData.phone && formData.phone.includes('@') ? (
+                  <FiMail className="input-icon" />
+                ) : (
+                  <FiPhone className="input-icon" />
+                )}
                 <input
-                  type="tel"
+                  type="text"
                   name="phone"
-                  placeholder="Phone Number"
+                  placeholder="Phone Number or Email"
                   value={formData.phone}
                   onChange={handleChange}
                   required
@@ -332,20 +336,14 @@ const LoginPage = () => {
           )}
 
           {/* Footer */}
-          {userType !== 'admin' ? (
-            <div className="auth-footer">
-              <p>Don't have an account?</p>
-              <div className="signup-links">
-                <Link to="/signup/farmer">Register as Farmer</Link>
-                <span>•</span>
-                <Link to="/signup/buyer">Register as Buyer</Link>
-              </div>
+          <div className="auth-footer">
+            <p>Don't have an account?</p>
+            <div className="signup-links">
+              <Link to="/signup/farmer">Register as Farmer</Link>
+              <span>•</span>
+              <Link to="/signup/buyer">Register as Buyer</Link>
             </div>
-          ) : (
-            <div className="auth-footer">
-              <p className="admin-note">🔒 Admin access restricted to authorized personnel</p>
-            </div>
-          )}
+          </div>
         </div>
       </div>
 
