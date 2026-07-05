@@ -153,8 +153,25 @@ else:
     frontend_url = os.getenv('FRONTEND_URL', '')
     if frontend_url and frontend_url not in allowed_origins:
         allowed_origins.append(frontend_url)
+    # Always allow GitHub Pages
+    gh_pages = "https://gundesandeep.github.io"
+    if gh_pages not in allowed_origins:
+        allowed_origins.append(gh_pages)
 
 print(f"[OK] CORS allowed origins: {allowed_origins}")
+
+# Handle OPTIONS preflight requests explicitly (critical for cross-origin)
+@app.before_request
+def handle_preflight():
+    if request.method == 'OPTIONS':
+        response = app.make_default_options_response()
+        origin = request.headers.get('Origin', '*')
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Max-Age'] = '3600'
+        return response
 
 # CORS headers are added in add_security_headers below
 
