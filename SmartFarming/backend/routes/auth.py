@@ -3,8 +3,28 @@ Complete Authentication Routes
 Supports: Email/Password, Firebase, Google Sign-In, OTP, JWT, Forgot Password
 """
 
-from flask import Blueprint, request, jsonify
-from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, decode_token
+# Flask imports — optional (not installed on Render/FastAPI deployments)
+try:
+    from flask import Blueprint, request, jsonify
+    from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, decode_token
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    # Provide stubs so the rest of the file doesn't crash
+    class _StubBP:
+        def __init__(self, *a, **kw): pass
+        def route(self, *a, **kw):
+            def decorator(f): return f
+            return decorator
+    Blueprint = lambda *a, **kw: _StubBP()
+    def jwt_required(*a, **kw):
+        def decorator(f): return f
+        return decorator
+    def get_jwt_identity(): return None
+    def create_access_token(**kw): return ''
+    def create_refresh_token(**kw): return ''
+    def decode_token(t): return {}
+
 from werkzeug.security import generate_password_hash, check_password_hash
 import random
 import string
@@ -27,7 +47,11 @@ from email.mime.multipart import MIMEMultipart
 
 load_dotenv()
 
-auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+if FLASK_AVAILABLE:
+    auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+else:
+    auth_bp = _StubBP()
+
 
 # ============================================================================
 # INITIALIZATION
