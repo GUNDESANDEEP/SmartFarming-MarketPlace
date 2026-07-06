@@ -77,16 +77,10 @@ const LoginPage = () => {
       if (userType === 'farmer') {
         response = await authAPI.farmerLogin(formData.email, formData.password);
       } else if (userType === 'buyer') {
-        // Detect if input is an email (admin) or phone (buyer)
+        // Send input to buyerLogin — backend handles email vs phone detection
+        // If the email belongs to an admin, backend auto-detects and logs in as admin
         const input = (formData.phone || '').trim();
-        const isEmail = input.includes('@');
-        if (isEmail) {
-          // Admin credentials entered on Buyer tab → admin login
-          response = await authAPI.adminLogin(input, formData.password);
-        } else {
-          // Regular buyer login with phone
-          response = await authAPI.buyerLogin(input, formData.password);
-        }
+        response = await authAPI.buyerLogin(input, formData.password);
       }
 
       const data = response.data;

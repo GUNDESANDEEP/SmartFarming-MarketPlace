@@ -366,7 +366,13 @@ export const authAPI = {
   register: (data) => apiClient.post('/auth/register', data),
   login: (data) => apiClient.post('/auth/login', data),
   farmerLogin: (email, password) => apiClient.post('/auth/login', { email, password, role: 'farmer' }),
-  buyerLogin: (phone, password) => apiClient.post('/auth/login', { phone, password, role: 'buyer' }),
+  // buyerLogin: sends both phone and email so backend can handle email OR phone input
+  buyerLogin: (phoneOrEmail, password) => apiClient.post('/auth/login', {
+    phone: phoneOrEmail,   // backend checks this for phone numbers
+    email: phoneOrEmail,   // backend checks this for emails
+    password,
+    role: 'buyer'
+  }),
   adminLogin: (email, password) => apiClient.post('/auth/login', { email, password, role: 'admin' }),
   firebaseLogin: (idToken) => apiClient.post('/auth/firebase-login', { id_token: idToken }),
   verifyEmail: (otp) => apiClient.post('/auth/verify-email', { otp }),

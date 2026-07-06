@@ -1240,19 +1240,34 @@ async def fa_login(request: FastAPIRequest):
                 return _json({'error': 'Email required for farmer login'}, 400)
             user = BaseModel.execute_query("SELECT * FROM farmers WHERE email = %s", (email,), fetch_one=True)
         elif role == 'buyer':
-            phone = data.get('phone', '')
-            if not phone:
-                return _json({'error': 'Phone required for buyer login'}, 400)
-            user = BaseModel.execute_query("SELECT * FROM buyers WHERE phone = %s", (phone,), fetch_one=True)
+            # Accept phone OR email — check both fields
+            phone_or_email = (data.get('phone', '') or data.get('email', '')).strip()
+            if not phone_or_email:
+                return _json({'error': 'Phone or Email required for buyer login'}, 400)
+            if '@' in phone_or_email:
+                # Input looks like an email — check buyers first
+                user = BaseModel.execute_query("SELECT * FROM buyers WHERE LOWER(email) = LOWER(%s)", (phone_or_email,), fetch_one=True)
+                if not user:
+                    # Not a buyer email — check if it's an admin email (admin logging in via Buyer tab)
+                    admin_user = BaseModel.execute_query("SELECT *, admin_id as id FROM admins WHERE LOWER(email) = LOWER(%s)", (phone_or_email,), fetch_one=True)
+                    if admin_user:
+                        user = admin_user
+                        role = 'admin'  # Elevate to admin role
+            else:
+                # Input looks like a phone number — query buyers by phone
+                user = BaseModel.execute_query("SELECT * FROM buyers WHERE phone = %s", (phone_or_email,), fetch_one=True)
         elif role == 'admin':
             email = data.get('email', '')
             if not email:
                 return _json({'error': 'Email required for admin login'}, 400)
-            user = BaseModel.execute_query("SELECT *, admin_id as id FROM admins WHERE email = %s", (email,), fetch_one=True)
+            user = BaseModel.execute_query("SELECT *, admin_id as id FROM admins WHERE LOWER(email) = LOWER(%s)", (email,), fetch_one=True)
         else:
             return _json({'error': 'Invalid role'}, 400)
         if not user:
-            msg = 'No account found with this phone number. Please register first.' if role == 'buyer' else 'No account found with this email. Please register first.'
+            if role == 'buyer':
+                msg = 'No account found with this phone or email. Please register first.'
+            else:
+                msg = 'No account found with this email. Please register first.'
             return _json({'error': msg}, 401)
         if not check_password_hash(user['password_hash'], password):
             return _json({'error': 'Incorrect password. Please try again.'}, 401)

@@ -2,7 +2,7 @@
   "name": "smart-farming-marketplace",
   "version": "1.0.0",
   "description": "Production-ready Smart Farmer Marketplace application",
-  "homepage": ".",
+  "homepage": "/",
   "private": true,
   "dependencies": {
     "axios": "^1.4.0",
