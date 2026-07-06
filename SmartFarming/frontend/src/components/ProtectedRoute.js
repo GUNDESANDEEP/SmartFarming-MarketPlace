@@ -1,47 +1,57 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { memo } from 'react';
+import { Navigate } from 'react-router-dom';
 import useAuthStore from '../services/authStore';
 
-const ProtectedRoute = ({ children, allowedRoles }) => {
-  const navigate = useNavigate();
-  const { isAuthenticated, role, authLoading } = useAuthStore();
+const ProtectedRoute = memo(function ProtectedRoute({ children, requiredRole, allowedRoles }) {
+  const token = localStorage.getItem('access_token');
+  const userStr = localStorage.getItem('user');
+  const user = userStr ? JSON.parse(userStr) : null;
+  
+  // Check zustand store for auth loading state (token refresh in progress)
+  const authLoading = useAuthStore((state) => state.authLoading);
 
-  useEffect(() => {
-    // Don't redirect while auth is still initializing (token refresh in progress)
-    if (authLoading) return;
+  const isAuthenticated = !!token && !!user;
 
-    if (!isAuthenticated) {
-      navigate('/login', { replace: true });
-    } else if (allowedRoles && !allowedRoles.includes(role)) {
-      navigate('/', { replace: true });
-    }
-  }, [isAuthenticated, role, navigate, allowedRoles, authLoading]);
-
-  // Show loading spinner while auth is being recovered
+  // While auth is still initializing (e.g. refreshing token), show a brief loader
+  // instead of immediately redirecting to login
   if (authLoading) {
     return (
       <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', minHeight: '100vh',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        minHeight: '100vh',
         background: 'linear-gradient(135deg, #0a2e1a 0%, #14532d 50%, #1a4731 100%)',
       }}>
         <div style={{
-          width: '48px', height: '48px', border: '3px solid rgba(34, 197, 94, 0.2)',
-          borderTop: '3px solid #22c55e', borderRadius: '50%',
+          width: '36px', height: '36px',
+          border: '3px solid rgba(34, 197, 94, 0.2)',
+          borderTop: '3px solid #22c55e',
+          borderRadius: '50%',
           animation: 'spin 0.8s linear infinite',
         }} />
-        <p style={{ color: '#86efac', marginTop: '16px', fontSize: '0.9rem', fontFamily: 'Poppins, sans-serif' }}>
-          Restoring your session...
-        </p>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
-  if (!isAuthenticated) return null;
-  if (allowedRoles && !allowedRoles.includes(role)) return null;
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // Support both requiredRole (single) and allowedRoles (array)
+  const roles = allowedRoles || (requiredRole ? [requiredRole] : null);
+  
+  if (roles && !roles.includes(user.role)) {
+    // Redirect to appropriate dashboard based on actual role
+    if (user.role === 'farmer') {
+      return <Navigate to="/farmer/dashboard" replace />;
+    } else if (user.role === 'admin') {
+      return <Navigate to="/admin/dashboard" replace />;
+    } else {
+      return <Navigate to="/buyer/marketplace" replace />;
+    }
+  }
 
   return children;
-};
+});
 
 export default ProtectedRoute;
