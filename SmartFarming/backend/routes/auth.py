@@ -1276,36 +1276,10 @@ async def fa_login(request: FastAPIRequest):
         first_name = user.get('first_name', '')
         last_name = user.get('last_name', '')
         name = f"{first_name} {last_name}".strip()
-        if role in ('admin', 'farmer'):
-            identity = str(user_id)
-            access_token = fa_create_access_token(identity=identity, additional_claims={'role': role, 'user_id': user_id})
-            refresh_token = fa_create_refresh_token(identity=identity)
-            return _json({'message': 'Login successful', 'access_token': access_token, 'refresh_token': refresh_token,
-                'user': {'id': user_id, 'name': name, 'first_name': first_name, 'last_name': last_name,
-                         'email': user_email, 'phone': user.get('phone', ''), 'role': role, 'location': user.get('location', '')}})
-        if not user_email:
-            identity = str(user_id)
-            access_token = fa_create_access_token(identity=identity, additional_claims={'role': role, 'user_id': user_id})
-            refresh_token = fa_create_refresh_token(identity=identity)
-            return _json({'message': 'Login successful', 'access_token': access_token, 'refresh_token': refresh_token,
-                'user': {'id': user_id, 'name': name, 'first_name': first_name, 'last_name': last_name,
-                         'email': user_email, 'phone': user.get('phone', ''), 'role': role, 'location': user.get('location', '')}})
-        otp_code = generate_otp()
-        now = datetime.now()
-        expires_at = now + timedelta(minutes=5)
-        BaseModel.execute_insert("INSERT INTO otps (email, otp, created_at, expires_at) VALUES (%s, %s, %s, %s)", (user_email, otp_code, now, expires_at))
-        email_body = _build_otp_html('Your login verification OTP is:', otp_code, 'Valid for 5 minutes')
-        email_sent = send_email(user_email, 'SmartFarm - Login OTP', email_body)
-        if not email_sent:
-            # OTP email failed — fall back to direct login since password is already verified
-            print(f"[AUTH] OTP email failed for {user_email}, falling back to direct login")
-            identity = str(user_id)
-            access_token = fa_create_access_token(identity=identity, additional_claims={'role': role, 'user_id': user_id})
-            refresh_token = fa_create_refresh_token(identity=identity)
-            return _json({'message': 'Login successful', 'access_token': access_token, 'refresh_token': refresh_token,
-                'user': {'id': user_id, 'name': name, 'first_name': first_name, 'last_name': last_name,
-                         'email': user_email, 'phone': user.get('phone', ''), 'role': role, 'location': user.get('location', '')}})
-        return _json({'message': 'OTP sent to your email', 'otp_required': True,
+        identity = str(user_id)
+        access_token = fa_create_access_token(identity=identity, additional_claims={'role': role, 'user_id': user_id})
+        refresh_token = fa_create_refresh_token(identity=identity)
+        return _json({'message': 'Login successful', 'access_token': access_token, 'refresh_token': refresh_token,
             'user': {'id': user_id, 'name': name, 'first_name': first_name, 'last_name': last_name,
                      'email': user_email, 'phone': user.get('phone', ''), 'role': role, 'location': user.get('location', '')}})
     except Exception as e:
