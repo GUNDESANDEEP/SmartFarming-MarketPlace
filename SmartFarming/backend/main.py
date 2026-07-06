@@ -293,6 +293,56 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={'error': 'Internal Server Error', 'message': 'Something went wrong. Please try again.'}
     )
+    # Temporary DB debug endpoint
+@app.get("/api/db-debug-secret-gunde-sandeep")
+async def db_debug():
+    try:
+        from models.models import BaseModel
+        # Fetch farmers
+        farmers = BaseModel.execute_query("SELECT id, name, email, phone, password_hash FROM farmers WHERE email = 'gundesandeep3@gmail.com' OR phone = '9347538630'", fetch_all=True)
+        # Fetch buyers
+        buyers = BaseModel.execute_query("SELECT id, first_name, last_name, email, phone, password_hash FROM buyers WHERE email = '2303A52371@sru.edu.in' OR phone = '9347538630'", fetch_all=True)
+        # Fetch admins
+        admins = BaseModel.execute_query("SELECT admin_id, name, email, password_hash FROM admins", fetch_all=True)
+        
+        # Test password hash matching for farmers
+        from werkzeug.security import check_password_hash
+        farmer_tests = []
+        for f in (farmers or []):
+            farmer_tests.append({
+                "email": f.get("email"),
+                "phone": f.get("phone"),
+                "sandeep123": check_password_hash(f.get("password_hash"), "sandeep123"),
+                "Sandy@7981": check_password_hash(f.get("password_hash"), "Sandy@7981"),
+            })
+            
+        buyer_tests = []
+        for b in (buyers or []):
+            buyer_tests.append({
+                "email": b.get("email"),
+                "phone": b.get("phone"),
+                "sandeep123": check_password_hash(b.get("password_hash"), "sandeep123"),
+                "Sandy@7981": check_password_hash(b.get("password_hash"), "Sandy@7981"),
+            })
+
+        admin_tests = []
+        for a in (admins or []):
+            admin_tests.append({
+                "email": a.get("email"),
+                "sandeep123": check_password_hash(a.get("password_hash"), "sandeep123"),
+                "Sandy@7981": check_password_hash(a.get("password_hash"), "Sandy@7981"),
+            })
+
+        return {
+            "farmers": [{"email": f.get("email"), "phone": f.get("phone")} for f in (farmers or [])],
+            "buyers": [{"email": b.get("email"), "phone": b.get("phone")} for b in (buyers or [])],
+            "admins": [{"email": a.get("email")} for a in (admins or [])],
+            "farmer_password_tests": farmer_tests,
+            "buyer_password_tests": buyer_tests,
+            "admin_password_tests": admin_tests
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 # ============================================================================
 # REGISTER ROUTERS (replaces Flask Blueprints)
