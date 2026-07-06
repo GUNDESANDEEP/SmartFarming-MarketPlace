@@ -83,19 +83,19 @@ async def unified_login(request: FastAPIRequest):
                 )
             
             if '@' in phone_or_email:
-                # Looks like email — check buyers table first
-                user = BaseModel.execute_query(
-                    "SELECT * FROM buyers WHERE LOWER(email) = LOWER(%s)", (phone_or_email,), fetch_one=True
+                # Looks like email — check ADMIN table FIRST (admin priority)
+                admin_user = BaseModel.execute_query(
+                    "SELECT *, admin_id as id FROM admins WHERE LOWER(email) = LOWER(%s)", 
+                    (phone_or_email,), fetch_one=True
                 )
-                if not user:
-                    # Not a buyer email — check if it's an admin (admin logging in via Buyer tab)
-                    admin_user = BaseModel.execute_query(
-                        "SELECT *, admin_id as id FROM admins WHERE LOWER(email) = LOWER(%s)", 
-                        (phone_or_email,), fetch_one=True
+                if admin_user:
+                    user = admin_user
+                    role = 'admin'  # Admin login via Buyer tab
+                else:
+                    # Not an admin — check buyers table
+                    user = BaseModel.execute_query(
+                        "SELECT * FROM buyers WHERE LOWER(email) = LOWER(%s)", (phone_or_email,), fetch_one=True
                     )
-                    if admin_user:
-                        user = admin_user
-                        role = 'admin'  # Elevate to admin
             else:
                 # Looks like phone — query buyers by phone
                 user = BaseModel.execute_query(
