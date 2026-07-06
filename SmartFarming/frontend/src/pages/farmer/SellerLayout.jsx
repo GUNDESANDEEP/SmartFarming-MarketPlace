@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
+import { API_BASE_URL } from '../../services/api';
 import '../../styles/seller.css';
 
 const NAV_SECTIONS = [
@@ -65,7 +66,7 @@ export default function SellerLayout({ children, title, subtitle }) {
       const token = localStorage.getItem('access_token');
       if (!token) return;
 
-      const API_URL = process.env.REACT_APP_API_URL || 'https://smartfarming-marketplace.onrender.com/api';
+      const API_URL = API_BASE_URL;
       const res = await fetch(`${API_URL}/auth/notifications`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -165,7 +166,7 @@ export default function SellerLayout({ children, title, subtitle }) {
     try {
       const token = localStorage.getItem('access_token');
       if (!token) return;
-      const API_URL = process.env.REACT_APP_API_URL || 'https://smartfarming-marketplace.onrender.com/api';
+      const API_URL = API_BASE_URL;
       await fetch(`${API_URL}/auth/notifications/read-all`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
@@ -301,7 +302,7 @@ export default function SellerLayout({ children, title, subtitle }) {
                             try {
                               const token = localStorage.getItem('access_token');
                               if (token) {
-                                const API_URL = process.env.REACT_APP_API_URL || 'https://smartfarming-marketplace.onrender.com/api';
+                                const API_URL = API_BASE_URL;
                                 await fetch(`${API_URL}/auth/notifications/${n.id}/read`, {
                                   method: 'POST',
                                   headers: { Authorization: `Bearer ${token}` }
