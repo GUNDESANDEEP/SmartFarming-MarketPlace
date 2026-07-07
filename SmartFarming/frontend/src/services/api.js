@@ -15,9 +15,15 @@ export const isRemoteApi = (baseUrl) =>
   (baseUrl.includes('onrender.com') || baseUrl.startsWith('https://'));
 
 const resolveApiBaseUrl = () => {
-  if (process.env.REACT_APP_API_URL) return process.env.REACT_APP_API_URL;
-  if (isBrowserLocalHost()) return '/api';
-  return 'https://smartfarming-marketplace.onrender.com/api';
+  let url = process.env.REACT_APP_API_URL;
+  if (!url) {
+    if (isBrowserLocalHost()) return '/api';
+    return 'https://smartfarming-marketplace.onrender.com/api';
+  }
+  // Ensure URL always ends with /api (handles misconfigured env vars)
+  url = url.replace(/\/+$/, ''); // trim trailing slashes
+  if (!url.endsWith('/api')) url += '/api';
+  return url;
 };
 
 export const API_BASE_URL = resolveApiBaseUrl();
