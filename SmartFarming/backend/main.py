@@ -43,6 +43,8 @@ else:
 # ============================================================================
 # FASTAPI APP
 # ============================================================================
+# FastAPI entrypoint for Smart Farming Marketplace
+# Trigger build: a6fb85a, 1cf93e9
 app = FastAPI(
     title="Smart Farmer Marketplace API",
     description="Complete marketplace API for farmers and buyers",
