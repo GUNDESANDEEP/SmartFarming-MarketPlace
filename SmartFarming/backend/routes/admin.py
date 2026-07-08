@@ -1345,20 +1345,34 @@ async def fa_receipts(request: FastAPIRequest):
         if not admin:
             return _ajson({'error': 'Admin access required'}, 403)
         try:
+            # Try receipts table first (has direct buyer_name, farmer info)
             receipts = BaseModel.execute_query(
-                """SELECT p.id as receipt_id, p.amount, p.payment_method, p.status as payment_status, p.created_at,
-                          o.order_number, o.status as order_status, o.quantity,
-                          prod.name as product_name,
-                          CONCAT(f.first_name, ' ', COALESCE(f.last_name, '')) as farmer_name,
-                          CONCAT(b.first_name, ' ', COALESCE(b.last_name, '')) as buyer_name
-                   FROM payments p
-                   LEFT JOIN orders o ON p.order_id = o.id
-                   LEFT JOIN products prod ON o.product_id = prod.id
-                   LEFT JOIN farmers f ON o.farmer_id = f.id
-                   LEFT JOIN buyers b ON o.buyer_id = b.id
-                   ORDER BY p.created_at DESC LIMIT 50""",
+                """SELECT r.id as receipt_id, r.receipt_id as receipt_code,
+                          COALESCE(r.grand_total, r.subtotal, 0) as amount,
+                          r.payment_type as payment_method, r.payment_status,
+                          r.created_at, r.quantity_kg,
+                          r.buyer_name,
+                          COALESCE(CONCAT(f.first_name, ' ', COALESCE(f.last_name, '')), 'N/A') as farmer_name,
+                          COALESCE(
+                            (SELECT name FROM products WHERE id = (SELECT product_id FROM receipt_items ri WHERE ri.receipt_id = r.id LIMIT 1)),
+                            (SELECT product_name FROM receipt_items ri WHERE ri.receipt_id = r.id LIMIT 1),
+                            'N/A'
+                          ) as product_name
+                   FROM receipts r
+                   LEFT JOIN farmers f ON r.farmer_id = f.id
+                   ORDER BY r.created_at DESC LIMIT 50""",
                 fetch_all=True) or []
-        except: receipts = []
+        except Exception as e1:
+            print(f'Receipts from receipts table failed: {e1}')
+            # Fallback: try payments table
+            try:
+                receipts = BaseModel.execute_query(
+                    """SELECT p.id as receipt_id, p.amount, p.payment_method,
+                              p.status as payment_status, p.created_at
+                       FROM payments p
+                       ORDER BY p.created_at DESC LIMIT 50""",
+                    fetch_all=True) or []
+            except: receipts = []
         return _ajson({'receipts': _serialize(receipts), 'total': len(receipts)})
     except Exception as e:
         return _ajson({'error': str(e)}, 500)
@@ -1551,12 +1565,12 @@ async def fa_saas_monthly_sales(request: FastAPIRequest):
         start_date = datetime.now() - timedelta(days=months * 31)
 
         monthly = BaseModel.execute_query(
-            """SELECT DATE_FORMAT(created_at, '%%Y-%%m') as month,
+            """SELECT TO_CHAR(created_at, 'YYYY-MM') as month,
                       COUNT(*) as order_count,
                       COALESCE(SUM(total_amount), 0) as revenue
                FROM orders
                WHERE created_at >= %s
-               GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
+               GROUP BY TO_CHAR(created_at, 'YYYY-MM')
                ORDER BY month ASC""",
             (start_date,), fetch_all=True) or []
 
