@@ -1346,7 +1346,17 @@ async def fa_receipts(request: FastAPIRequest):
             return _ajson({'error': 'Admin access required'}, 403)
         try:
             receipts = BaseModel.execute_query(
-                "SELECT p.*, o.order_number, o.status as order_status FROM payments p LEFT JOIN orders o ON p.order_id = o.id ORDER BY p.created_at DESC LIMIT 50",
+                """SELECT p.id as receipt_id, p.amount, p.payment_method, p.status as payment_status, p.created_at,
+                          o.order_number, o.status as order_status, o.quantity,
+                          prod.name as product_name,
+                          CONCAT(f.first_name, ' ', COALESCE(f.last_name, '')) as farmer_name,
+                          CONCAT(b.first_name, ' ', COALESCE(b.last_name, '')) as buyer_name
+                   FROM payments p
+                   LEFT JOIN orders o ON p.order_id = o.id
+                   LEFT JOIN products prod ON o.product_id = prod.id
+                   LEFT JOIN farmers f ON o.farmer_id = f.id
+                   LEFT JOIN buyers b ON o.buyer_id = b.id
+                   ORDER BY p.created_at DESC LIMIT 50""",
                 fetch_all=True) or []
         except: receipts = []
         return _ajson({'receipts': _serialize(receipts), 'total': len(receipts)})
@@ -1404,20 +1414,176 @@ async def fa_settle_earning(earning_id: int, request: FastAPIRequest):
         return _ajson({'error': str(e)}, 500)
 
 @admin_router.get('/saas/analytics')
-async def fa_saas_analytics(): return _ajson({'revenue': 0, 'orders': 0, 'users': 0, 'products': 0})
+async def fa_saas_analytics(request: FastAPIRequest):
+    """Real SaaS analytics — pulls live data from DB."""
+    try:
+        admin, _ = _fa_check_admin(request)
+        if not admin:
+            return _ajson({'error': 'Admin access required'}, 403)
+
+        days = int(request.query_params.get('days', 30))
+        now = datetime.now()
+        start_date = now - timedelta(days=days)
+        prev_start = start_date - timedelta(days=days)
+
+        # --- Core counts ---
+        farmer_count = BaseModel.execute_query("SELECT COUNT(*) as c FROM farmers", fetch_one=True) or {'c': 0}
+        buyer_count = BaseModel.execute_query("SELECT COUNT(*) as c FROM buyers", fetch_one=True) or {'c': 0}
+        product_count = BaseModel.execute_query("SELECT COUNT(*) as c FROM products", fetch_one=True) or {'c': 0}
+        pending_products = BaseModel.execute_query("SELECT COUNT(*) as c FROM products WHERE status = 'pending'", fetch_one=True) or {'c': 0}
+        approved_products = BaseModel.execute_query("SELECT COUNT(*) as c FROM products WHERE status = 'approved'", fetch_one=True) or {'c': 0}
+
+        # --- Orders & Revenue (current period) ---
+        current = BaseModel.execute_query(
+            "SELECT COUNT(*) as total_orders, COALESCE(SUM(total_amount), 0) as total_revenue, COALESCE(AVG(total_amount), 0) as avg_order_value FROM orders WHERE created_at >= %s",
+            (start_date,), fetch_one=True) or {'total_orders': 0, 'total_revenue': 0, 'avg_order_value': 0}
+
+        # --- Orders & Revenue (previous period for growth) ---
+        previous = BaseModel.execute_query(
+            "SELECT COUNT(*) as total_orders, COALESCE(SUM(total_amount), 0) as total_revenue FROM orders WHERE created_at >= %s AND created_at < %s",
+            (prev_start, start_date), fetch_one=True) or {'total_orders': 0, 'total_revenue': 0}
+
+        # --- New users in period ---
+        new_farmers = BaseModel.execute_query("SELECT COUNT(*) as c FROM farmers WHERE created_at >= %s", (start_date,), fetch_one=True) or {'c': 0}
+        new_buyers = BaseModel.execute_query("SELECT COUNT(*) as c FROM buyers WHERE created_at >= %s", (start_date,), fetch_one=True) or {'c': 0}
+
+        # --- Growth calculations ---
+        prev_rev = float(previous.get('total_revenue', 0) or 0)
+        curr_rev = float(current.get('total_revenue', 0) or 0)
+        revenue_growth = round(((curr_rev - prev_rev) / prev_rev * 100) if prev_rev > 0 else (100 if curr_rev > 0 else 0), 1)
+
+        prev_ord = int(previous.get('total_orders', 0) or 0)
+        curr_ord = int(current.get('total_orders', 0) or 0)
+        order_growth = round(((curr_ord - prev_ord) / prev_ord * 100) if prev_ord > 0 else (100 if curr_ord > 0 else 0), 1)
+
+        return _ajson({'analytics': {
+            'total_revenue': float(current.get('total_revenue', 0) or 0),
+            'total_orders': int(current.get('total_orders', 0) or 0),
+            'avg_order_value': round(float(current.get('avg_order_value', 0) or 0), 2),
+            'total_farmers': int(farmer_count.get('c', 0) or 0),
+            'total_buyers': int(buyer_count.get('c', 0) or 0),
+            'total_products': int(product_count.get('c', 0) or 0),
+            'pending_products': int(pending_products.get('c', 0) or 0),
+            'approved_products': int(approved_products.get('c', 0) or 0),
+            'new_farmers': int(new_farmers.get('c', 0) or 0),
+            'new_buyers': int(new_buyers.get('c', 0) or 0),
+            'revenue_growth': revenue_growth,
+            'order_growth': order_growth,
+        }})
+    except Exception as e:
+        return _ajson({'error': str(e)}, 500)
+
 
 @admin_router.get('/saas/top-products')
-async def fa_saas_top_products(): return _ajson([])
+async def fa_saas_top_products(request: FastAPIRequest):
+    """Top products by order count and revenue."""
+    try:
+        admin, _ = _fa_check_admin(request)
+        if not admin:
+            return _ajson({'error': 'Admin access required'}, 403)
+
+        days = int(request.query_params.get('days', 30))
+        limit = int(request.query_params.get('limit', 10))
+        start_date = datetime.now() - timedelta(days=days)
+
+        products = BaseModel.execute_query(
+            """SELECT p.id, p.name, p.category, p.price, p.image_url,
+                      COUNT(o.id) as order_count,
+                      COALESCE(SUM(o.total_amount), 0) as total_revenue
+               FROM products p
+               LEFT JOIN orders o ON o.product_id = p.id AND o.created_at >= %s
+               GROUP BY p.id, p.name, p.category, p.price, p.image_url
+               ORDER BY order_count DESC, total_revenue DESC
+               LIMIT %s""",
+            (start_date, limit), fetch_all=True) or []
+
+        return _ajson({'products': _serialize(products)})
+    except Exception as e:
+        return _ajson({'error': str(e)}, 500)
+
 
 @admin_router.get('/saas/revenue-breakdown')
-async def fa_saas_revenue_breakdown(): return _ajson([])
+async def fa_saas_revenue_breakdown(request: FastAPIRequest):
+    """Revenue grouped by product category."""
+    try:
+        admin, _ = _fa_check_admin(request)
+        if not admin:
+            return _ajson({'error': 'Admin access required'}, 403)
+
+        days = int(request.query_params.get('days', 30))
+        start_date = datetime.now() - timedelta(days=days)
+
+        breakdown = BaseModel.execute_query(
+            """SELECT COALESCE(p.category, 'Other') as category,
+                      COUNT(o.id) as order_count,
+                      COALESCE(SUM(o.total_amount), 0) as revenue
+               FROM orders o
+               LEFT JOIN products p ON o.product_id = p.id
+               WHERE o.created_at >= %s
+               GROUP BY COALESCE(p.category, 'Other')
+               ORDER BY revenue DESC""",
+            (start_date,), fetch_all=True) or []
+
+        colors = ['#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1']
+        result = []
+        for i, row in enumerate(breakdown):
+            result.append({
+                'category': row.get('category', 'Other'),
+                'order_count': int(row.get('order_count', 0) or 0),
+                'value': float(row.get('revenue', 0) or 0),
+                'color': colors[i % len(colors)],
+            })
+
+        return _ajson({'breakdown': result})
+    except Exception as e:
+        return _ajson({'error': str(e)}, 500)
+
 
 @admin_router.get('/saas/monthly-sales')
-async def fa_saas_monthly_sales(): return _ajson([])
+async def fa_saas_monthly_sales(request: FastAPIRequest):
+    """Monthly revenue for the last N months."""
+    try:
+        admin, _ = _fa_check_admin(request)
+        if not admin:
+            return _ajson({'error': 'Admin access required'}, 403)
+
+        months = int(request.query_params.get('months', 6))
+        start_date = datetime.now() - timedelta(days=months * 31)
+
+        monthly = BaseModel.execute_query(
+            """SELECT DATE_FORMAT(created_at, '%%Y-%%m') as month,
+                      COUNT(*) as order_count,
+                      COALESCE(SUM(total_amount), 0) as revenue
+               FROM orders
+               WHERE created_at >= %s
+               GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
+               ORDER BY month ASC""",
+            (start_date,), fetch_all=True) or []
+
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        result = []
+        for row in monthly:
+            m = row.get('month', '')
+            try:
+                month_idx = int(m.split('-')[1]) - 1
+                label = month_names[month_idx]
+            except:
+                label = m
+            result.append({
+                'label': label,
+                'value': float(row.get('revenue', 0) or 0),
+                'orders': int(row.get('order_count', 0) or 0),
+            })
+
+        return _ajson({'monthly_data': result})
+    except Exception as e:
+        return _ajson({'error': str(e)}, 500)
+
 
 @admin_router.get('/saas/profile')
 async def fa_saas_profile(request: FastAPIRequest):
     try:
         admin, uid = _fa_check_admin(request)
-        return _ajson(_serialize_one(admin) if admin else {'id': uid, 'role': 'admin'})
+        return _ajson({'profile': _serialize_one(admin) if admin else {'id': uid, 'role': 'admin'}})
     except: return _ajson({})
+
