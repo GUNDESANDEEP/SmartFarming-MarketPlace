@@ -1014,3 +1014,173 @@ async def fa_payment_history(request: FastAPIRequest):
         return _pjson({'payments': result})
     except Exception as e:
         return _pjson({'error': str(e)}, 500)
+
+
+@payments_router.post('/direct-sale')
+async def fa_direct_sale(request: FastAPIRequest):
+    """FastAPI version of direct-sale endpoint."""
+    try:
+        farmer_id = _pay_uid(request)
+        if not farmer_id:
+            return _pjson({'error': 'Auth required'}, 401)
+
+        data = await request.json()
+        items = data.get('items', [])
+        payment_type = data.get('payment_type', 'cash')
+        buyer_phone = data.get('buyer_phone', '')
+        buyer_name = data.get('buyer_name', '')
+        buyer_email = data.get('buyer_email', '')
+        discount_val = float(data.get('discount', 0))
+
+        if not items:
+            return _pjson({'error': 'At least one item is required'}, 400)
+
+        # Calculate totals
+        subtotal = sum(
+            float(it.get('quantity', 0)) * float(it.get('price_per_kg', 0))
+            for it in items
+        )
+        total_amount = max(subtotal - discount_val, 0)
+
+        # Try to find buyer by phone
+        buyer_id = None
+        if buyer_phone:
+            buyer_row = BaseModel.execute_query(
+                "SELECT id FROM buyers WHERE phone = %s", (buyer_phone,), fetch_one=True
+            )
+            if buyer_row:
+                buyer_id = buyer_row['id']
+
+        # Create payment record
+        payment_id = BaseModel.execute_insert(
+            """INSERT INTO payments
+               (buyer_id, amount, payment_method, status, created_at)
+               VALUES (%s, %s, %s, %s, NOW())""",
+            (buyer_id, total_amount, payment_type, 'completed')
+        )
+
+        # Create receipt
+        receipt_id = _generate_receipt_id()
+        qr_code = f"https://smartfarm.app/verify/{receipt_id}"
+
+        db_receipt_id = BaseModel.execute_insert(
+            """INSERT INTO receipts
+               (receipt_id, payment_id, buyer_id, farmer_id,
+                subtotal, discount, grand_total, payment_type, payment_status,
+                buyer_name, buyer_phone, buyer_email, qr_code, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())""",
+            (receipt_id, payment_id, buyer_id, farmer_id,
+             subtotal, discount_val, total_amount, payment_type, 'completed',
+             buyer_name, buyer_phone, buyer_email, qr_code)
+        )
+
+        # Create receipt items
+        saved_items = []
+        for it in items:
+            item_total = float(it.get('quantity', 0)) * float(it.get('price_per_kg', 0))
+            BaseModel.execute_insert(
+                """INSERT INTO receipt_items
+                   (receipt_id, product_id, product_name, quantity_kg, price_per_kg, product_quality, item_total)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (db_receipt_id, it.get('product_id'), it.get('product_name'),
+                 float(it.get('quantity', 0)), float(it.get('price_per_kg', 0)),
+                 it.get('quality', 'Standard'), item_total)
+            )
+            saved_items.append({
+                'product_id': it.get('product_id'),
+                'product_name': it.get('product_name'),
+                'quantity': it.get('quantity'),
+                'price_per_kg': it.get('price_per_kg'),
+                'quality': it.get('quality', 'standard'),
+                'total': item_total,
+            })
+
+        # Create transaction record
+        txn_id = _generate_transaction_id()
+        BaseModel.execute_insert(
+            """INSERT INTO transactions
+               (transaction_id, payment_id, receipt_id, user_id, user_type,
+                type, amount, description, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())""",
+            (txn_id, payment_id, db_receipt_id, farmer_id, 'farmer',
+             'credit', total_amount, f'Direct sale to {buyer_name}')
+        )
+
+        # Get farmer info
+        farmer_info = BaseModel.execute_query(
+            "SELECT first_name, last_name, phone, email FROM farmers WHERE id = %s",
+            (int(farmer_id),), fetch_one=True
+        ) or {}
+        farmer_name_full = f"{farmer_info.get('first_name', '')} {farmer_info.get('last_name', '')}".strip()
+
+        return _pjson({
+            'success': True,
+            'receipt': {
+                'id': db_receipt_id,
+                'receipt_id': receipt_id,
+                'farmer_id': farmer_id,
+                'farmer_name': farmer_name_full,
+                'farmer_phone': farmer_info.get('phone', ''),
+                'farmer_email': farmer_info.get('email', ''),
+                'buyer_name': buyer_name,
+                'buyer_phone': buyer_phone,
+                'buyer_email': buyer_email,
+                'items': saved_items,
+                'subtotal': subtotal,
+                'discount': discount_val,
+                'grand_total': total_amount,
+                'payment_type': payment_type,
+                'payment_status': 'completed',
+                'qr_code': qr_code,
+                'transaction_id': txn_id,
+                'created_at': datetime.now().isoformat(),
+            }
+        }, 201)
+
+    except Exception as e:
+        print(f"FA Direct sale error: {e}")
+        return _pjson({'error': str(e)}, 500)
+
+
+@payments_router.get('/receipt/{receipt_id}')
+async def fa_get_receipt(receipt_id: str, request: FastAPIRequest):
+    """FastAPI version of get-receipt endpoint."""
+    try:
+        receipt = BaseModel.execute_query(
+            """SELECT r.*,
+                      f.first_name AS farmer_first_name, f.last_name AS farmer_last_name,
+                      f.email AS farmer_email, f.phone AS farmer_phone,
+                      b.first_name AS buyer_first_name, b.last_name AS buyer_last_name,
+                      b.email AS buyer_email_db, b.phone AS buyer_phone_db
+               FROM receipts r
+               LEFT JOIN farmers f ON r.farmer_id = f.id
+               LEFT JOIN buyers b ON r.buyer_id = b.id
+               WHERE r.receipt_id = %s""",
+            (receipt_id,), fetch_one=True
+        )
+        if not receipt:
+            return _pjson({'error': 'Receipt not found'}, 404)
+
+        items = BaseModel.execute_query(
+            "SELECT * FROM receipt_items WHERE receipt_id = %s",
+            (receipt['id'],), fetch_all=True
+        )
+
+        receipt_data = {}
+        for k, v in receipt.items():
+            if hasattr(v, 'isoformat'): receipt_data[k] = v.isoformat()
+            elif isinstance(v, __import__('decimal').Decimal): receipt_data[k] = float(v)
+            else: receipt_data[k] = v
+        receipt_data['items'] = []
+        for item in (items or []):
+            item_data = {}
+            for k, v in item.items():
+                if hasattr(v, 'isoformat'): item_data[k] = v.isoformat()
+                elif isinstance(v, __import__('decimal').Decimal): item_data[k] = float(v)
+                else: item_data[k] = v
+            receipt_data['items'].append(item_data)
+
+        return _pjson({'success': True, 'receipt': receipt_data})
+    except Exception as e:
+        return _pjson({'error': str(e)}, 500)
+

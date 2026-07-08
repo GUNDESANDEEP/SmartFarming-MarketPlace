@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { FiSend, FiCamera, FiGlobe, FiX, FiPaperclip, FiVolume2, FiVolumeX, FiPlus, FiTrash2, FiMessageSquare, FiMenu } from 'react-icons/fi';
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+const _rawUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+const API_URL = _rawUrl.replace(/\/+$/, '').endsWith('/api') ? _rawUrl.replace(/\/+$/, '') : _rawUrl.replace(/\/+$/, '') + '/api';
 const getToken = () => localStorage.getItem('access_token');
 const STORAGE_KEY = 'agribot_chats';
 
