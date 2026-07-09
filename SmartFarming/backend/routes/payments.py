@@ -951,6 +951,65 @@ def farmer_sales_history():
         return jsonify({'error': str(e)}), 500
 
 
+@payments_bp.route('/receipt/send-direct', methods=['POST'])
+def send_receipt_direct():
+    """Send receipt directly using provided JSON data (no DB lookup needed)."""
+    try:
+        data = request.get_json()
+        email_address = data.get('email_address', '').strip()
+        receipt = data.get('receipt_data', {})
+        if not email_address or not receipt:
+            return jsonify({'error': 'Email address and receipt data required'}), 400
+
+        receipt_id = receipt.get('receipt_id', 'N/A')
+        items = receipt.get('items', [])
+        grand_total = receipt.get('grand_total', receipt.get('total_amount', 0))
+        payment_type = receipt.get('payment_type', 'N/A')
+
+        # Build email HTML
+        email_html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;background:#f0fdf4;border-radius:12px;">
+            <h2 style="color:#166534;">🧾 SmartFarming Receipt</h2>
+            <p><strong>Receipt:</strong> {receipt_id}</p>
+            <p><strong>Date:</strong> {receipt.get('created_at', '')}</p>
+            <p><strong>Buyer:</strong> {receipt.get('buyer_name', '')}</p>
+            <hr/>
+            <table style="width:100%;border-collapse:collapse;">
+                <tr style="background:#dcfce7;">
+                    <th style="padding:6px;text-align:left;">Item</th>
+                    <th style="padding:6px;text-align:right;">Qty</th>
+                    <th style="padding:6px;text-align:right;">Rate</th>
+                    <th style="padding:6px;text-align:right;">Total</th>
+                </tr>
+                {''.join(
+                    f"<tr><td style='padding:6px;'>{it.get('product_name','')}</td>"
+                    f"<td style='padding:6px;text-align:right;'>{it.get('quantity_kg','')} kg</td>"
+                    f"<td style='padding:6px;text-align:right;'>₹{it.get('price_per_kg','')}</td>"
+                    f"<td style='padding:6px;text-align:right;'>₹{it.get('item_total','')}</td></tr>"
+                    for it in items
+                )}
+            </table>
+            <hr/>
+            <p>Subtotal: ₹{receipt.get('subtotal', 0)}</p>
+            <p>Discount: ₹{receipt.get('discount', 0)}</p>
+            <p style="font-size:18px;"><strong>Grand Total: ₹{grand_total}</strong></p>
+            <p>Payment: {payment_type}</p>
+            <p style="font-size:12px;color:#6b7280;">
+                Verify: <a href="https://smartfarm.app/verify/{receipt_id}">https://smartfarm.app/verify/{receipt_id}</a>
+            </p>
+        </div>
+        """
+        
+        sent = _send_email(email_address, f'SmartFarming Receipt - {receipt_id}', email_html)
+        results = {'email': {'sent': sent}}
+        if not sent:
+            results['email']['error'] = 'Failed to send email'
+        return jsonify({'success': True, 'results': results}), 200
+    except Exception as e:
+        print(f"Direct send receipt error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 # ============================================================================
 # FASTAPI ROUTER — required by main.py
 # ============================================================================
@@ -1182,5 +1241,64 @@ async def fa_get_receipt(receipt_id: str, request: FastAPIRequest):
 
         return _pjson({'success': True, 'receipt': receipt_data})
     except Exception as e:
+        return _pjson({'error': str(e)}, 500)
+
+
+@payments_router.post('/receipt/send-direct')
+async def fa_send_receipt_direct(request: FastAPIRequest):
+    """FastAPI version of send-receipt-direct endpoint."""
+    try:
+        data = await request.json()
+        email_address = data.get('email_address', '').strip()
+        receipt = data.get('receipt_data', {})
+        if not email_address or not receipt:
+            return _pjson({'error': 'Email address and receipt data required'}, 400)
+
+        receipt_id = receipt.get('receipt_id', 'N/A')
+        items = receipt.get('items', [])
+        grand_total = receipt.get('grand_total', receipt.get('total_amount', 0))
+        payment_type = receipt.get('payment_type', 'N/A')
+
+        # Build email HTML
+        email_html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;background:#f0fdf4;border-radius:12px;">
+            <h2 style="color:#166534;">🧾 SmartFarming Receipt</h2>
+            <p><strong>Receipt:</strong> {receipt_id}</p>
+            <p><strong>Date:</strong> {receipt.get('created_at', '')}</p>
+            <p><strong>Buyer:</strong> {receipt.get('buyer_name', '')}</p>
+            <hr/>
+            <table style="width:100%;border-collapse:collapse;">
+                <tr style="background:#dcfce7;">
+                    <th style="padding:6px;text-align:left;">Item</th>
+                    <th style="padding:6px;text-align:right;">Qty</th>
+                    <th style="padding:6px;text-align:right;">Rate</th>
+                    <th style="padding:6px;text-align:right;">Total</th>
+                </tr>
+                {''.join(
+                    f"<tr><td style='padding:6px;'>{it.get('product_name','')}</td>"
+                    f"<td style='padding:6px;text-align:right;'>{it.get('quantity_kg','')} kg</td>"
+                    f"<td style='padding:6px;text-align:right;'>₹{it.get('price_per_kg','')}</td>"
+                    f"<td style='padding:6px;text-align:right;'>₹{it.get('item_total','')}</td></tr>"
+                    for it in items
+                )}
+            </table>
+            <hr/>
+            <p>Subtotal: ₹{receipt.get('subtotal', 0)}</p>
+            <p>Discount: ₹{receipt.get('discount', 0)}</p>
+            <p style="font-size:18px;"><strong>Grand Total: ₹{grand_total}</strong></p>
+            <p>Payment: {payment_type}</p>
+            <p style="font-size:12px;color:#6b7280;">
+                Verify: <a href="https://smartfarm.app/verify/{receipt_id}">https://smartfarm.app/verify/{receipt_id}</a>
+            </p>
+        </div>
+        """
+        
+        sent = _send_email(email_address, f'SmartFarming Receipt - {receipt_id}', email_html)
+        results = {'email': {'sent': sent}}
+        if not sent:
+            results['email']['error'] = 'Failed to send email'
+        return _pjson({'success': True, 'results': results})
+    except Exception as e:
+        print(f"FA Direct send receipt error: {e}")
         return _pjson({'error': str(e)}, 500)
 
