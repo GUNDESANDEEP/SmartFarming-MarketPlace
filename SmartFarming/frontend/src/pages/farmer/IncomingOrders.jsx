@@ -35,6 +35,7 @@ export default function IncomingOrders() {
   const { user } = useAuthStore();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('new');
   const [actionLoading, setActionLoading] = useState(null);
@@ -44,10 +45,23 @@ export default function IncomingOrders() {
   const pollRef = useRef(null);
   const failCountRef = useRef(0);
 
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    failCountRef.current = 0;
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+    }
+    pollRef.current = setInterval(fetchOrders, 15000);
+    await fetchOrders();
+    setRefreshing(false);
+  };
+
   useEffect(() => {
     fetchOrders();
     pollRef.current = setInterval(fetchOrders, 15000);
-    return () => clearInterval(pollRef.current);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
 
   const playSound = useCallback(() => {
@@ -169,7 +183,19 @@ export default function IncomingOrders() {
     <div style={styles.page}>
       <div style={styles.topBar}>
         <h2 style={styles.pageTitle}>🛒 Incoming Orders</h2>
-        <button onClick={fetchOrders} style={styles.refreshBtn}><FiRefreshCw size={16} /> Refresh</button>
+        <button
+          onClick={handleManualRefresh}
+          disabled={refreshing || loading}
+          style={styles.refreshBtn}
+        >
+          <FiRefreshCw
+            size={16}
+            style={{
+              animation: refreshing ? 'spin 1s linear infinite' : 'none'
+            }}
+          />
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
       </div>
 
       {/* Stats */}
