@@ -1302,3 +1302,28 @@ async def fa_send_receipt_direct(request: FastAPIRequest):
         print(f"FA Direct send receipt error: {e}")
         return _pjson({'error': str(e)}, 500)
 
+
+@payments_router.get('/test-email-send')
+async def fa_test_email_send():
+    sender_email = os.getenv('EMAIL_SENDER')
+    sender_password = os.getenv('EMAIL_PASSWORD')
+    host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+    port = os.getenv('SMTP_PORT', '587')
+    try:
+        server = smtplib.SMTP(host, int(port), timeout=10)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(sender_email, sender_password)
+        server.quit()
+        return _pjson({'status': 'SMTP credentials verified successfully on backend!'})
+    except Exception as e:
+        return _pjson({
+            'status': 'Failed',
+            'error': str(e),
+            'sender': sender_email,
+            'password_len': len(sender_password) if sender_password else 0,
+            'host': host,
+            'port': port
+        }, 500)
+
