@@ -149,9 +149,10 @@ export default function FarmerAnalytics() {
             <div className="seller-card-body">
               <div className="seller-bar-chart">
                 {monthlyData.map((m, i) => (
-                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div className="seller-bar-value">₹{m.revenue > 1000 ? (m.revenue / 1000).toFixed(1) + 'k' : m.revenue}</div>
-                    <div className="seller-bar" style={{ height: `${Math.max((m.revenue / maxRevenue) * 100, 5)}%` }} />
+                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', position: 'relative' }}>
+                    <div className="seller-bar" style={{ height: `${Math.max((m.revenue / maxRevenue) * 100, 5)}%`, width: '100%', position: 'relative' }}>
+                      <div className="seller-bar-value">₹{m.revenue > 1000 ? (m.revenue / 1000).toFixed(1) + 'k' : m.revenue}</div>
+                    </div>
                     <div className="seller-bar-label">{m.month}</div>
                   </div>
                 ))}
@@ -183,10 +184,10 @@ export default function FarmerAnalytics() {
             <div className="seller-card-header"><h3>📦 Order Status</h3></div>
             <div className="seller-card-body">
               {[
-                { label: 'Pending', count: orders.filter(o => o.status === 'pending').length, color: '#f59e0b' },
-                { label: 'Active', count: orders.filter(o => ['confirmed','processing','packed','dispatched','in_transit','out_for_delivery'].includes(o.status)).length, color: '#3b82f6' },
+                { label: 'Pending', count: orders.filter(o => ['PLACED', 'CONFIRMED'].includes(o.order_status)).length, color: '#f59e0b' },
+                { label: 'Active', count: orders.filter(o => ['ACCEPTED', 'PACKED', 'OUT_FOR_DELIVERY'].includes(o.order_status)).length, color: '#3b82f6' },
                 { label: 'Delivered', count: deliveredOrders.length, color: '#22c55e' },
-                { label: 'Cancelled', count: orders.filter(o => o.status === 'cancelled').length, color: '#ef4444' },
+                { label: 'Cancelled', count: orders.filter(o => o.order_status === 'CANCELLED').length, color: '#ef4444' },
               ].map((s, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid #f1f5f9' }}>
                   <div style={{ width: 10, height: 10, borderRadius: '50%', background: s.color }} />
@@ -369,9 +370,10 @@ export default function FarmerAnalytics() {
             <div className="seller-card-body">
               <div className="seller-bar-chart">
                 {monthlyData.map((m, i) => (
-                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div className="seller-bar-value">₹{(m.revenue * 0.85) > 1000 ? ((m.revenue * 0.85) / 1000).toFixed(1) + 'k' : (m.revenue * 0.85).toFixed(0)}</div>
-                    <div className="seller-bar" style={{ height: `${Math.max(((m.revenue * 0.85) / maxRevenue) * 100, 5)}%`, background: 'linear-gradient(180deg, #4ade80, #166534)' }} />
+                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end', position: 'relative' }}>
+                    <div className="seller-bar" style={{ height: `${Math.max(((m.revenue * 0.85) / maxRevenue) * 100, 5)}%`, width: '100%', position: 'relative', background: 'linear-gradient(180deg, #4ade80, #166534)' }}>
+                      <div className="seller-bar-value">₹{(m.revenue * 0.85) > 1000 ? ((m.revenue * 0.85) / 1000).toFixed(1) + 'k' : (m.revenue * 0.85).toFixed(0)}</div>
+                    </div>
                     <div className="seller-bar-label">{m.month}</div>
                   </div>
                 ))}
