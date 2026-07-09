@@ -1127,16 +1127,22 @@ async def fa_delete_user(target_user_id: str, request: FastAPIRequest):
                         "DELETE FROM order_tracking WHERE order_id IN (SELECT id FROM orders WHERE farmer_id = %s)",
                         (target_user_id,)
                     )
+                except Exception as e:
+                    print(f"Error deleting farmer order_tracking: {e}")
+                try:
                     BaseModel.execute_query(
                         "DELETE FROM disputes WHERE order_id IN (SELECT id FROM orders WHERE farmer_id = %s)",
                         (target_user_id,)
                     )
+                except Exception as e:
+                    print(f"Error deleting farmer disputes: {e}")
+                try:
                     BaseModel.execute_query(
                         "DELETE FROM return_requests WHERE order_id IN (SELECT id FROM orders WHERE farmer_id = %s)",
                         (target_user_id,)
                     )
                 except Exception as e:
-                    print(f"Error deleting farmer order dependents: {e}")
+                    print(f"Error deleting farmer return_requests: {e}")
 
                 # 2. Delete buyer reviews, platform earnings, payment otps, receipts (and items)
                 try:
@@ -1144,12 +1150,27 @@ async def fa_delete_user(target_user_id: str, request: FastAPIRequest):
                         "DELETE FROM receipt_items WHERE receipt_id IN (SELECT id FROM receipts WHERE farmer_id = %s)",
                         (target_user_id,)
                     )
+                except Exception as e:
+                    print(f"Error deleting farmer receipt_items: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM receipts WHERE farmer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting farmer receipts: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM buyer_reviews WHERE farmer_id = %s", (target_user_id,))
-                    BaseModel.execute_query("DELETE FROM platform_earnings WHERE farmer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting farmer buyer_reviews: {e}")
+                try:
+                    BaseModel.execute_query(
+                        "DELETE FROM platform_earnings WHERE farmer_id = %s OR order_id IN (SELECT id FROM orders WHERE farmer_id = %s)",
+                        (target_user_id, target_user_id)
+                    )
+                except Exception as e:
+                    print(f"Error deleting farmer platform_earnings: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM payment_otps WHERE farmer_id = %s", (target_user_id,))
                 except Exception as e:
-                    print(f"Error deleting farmer platform dependents: {e}")
+                    print(f"Error deleting farmer payment_otps: {e}")
 
                 # 3. Delete payments associated with farmer orders
                 try:
@@ -1163,10 +1184,16 @@ async def fa_delete_user(target_user_id: str, request: FastAPIRequest):
                 # 4. Delete orders, products, wallet
                 try:
                     BaseModel.execute_query("DELETE FROM orders WHERE farmer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting farmer orders: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM products WHERE farmer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting farmer products: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM wallet WHERE farmer_id = %s", (target_user_id,))
                 except Exception as e:
-                    print(f"Error deleting farmer products/orders/wallet: {e}")
+                    print(f"Error deleting farmer wallet: {e}")
 
                 # 5. Delete the farmer itself
                 BaseModel.execute_query("DELETE FROM farmers WHERE id = %s", (target_user_id,))
@@ -1180,16 +1207,22 @@ async def fa_delete_user(target_user_id: str, request: FastAPIRequest):
                         "DELETE FROM order_tracking WHERE order_id IN (SELECT id FROM orders WHERE buyer_id = %s)",
                         (target_user_id,)
                     )
+                except Exception as e:
+                    print(f"Error deleting buyer order_tracking: {e}")
+                try:
                     BaseModel.execute_query(
                         "DELETE FROM disputes WHERE order_id IN (SELECT id FROM orders WHERE buyer_id = %s)",
                         (target_user_id,)
                     )
+                except Exception as e:
+                    print(f"Error deleting buyer disputes: {e}")
+                try:
                     BaseModel.execute_query(
                         "DELETE FROM return_requests WHERE order_id IN (SELECT id FROM orders WHERE buyer_id = %s)",
                         (target_user_id,)
                     )
                 except Exception as e:
-                    print(f"Error deleting buyer order dependents: {e}")
+                    print(f"Error deleting buyer return_requests: {e}")
 
                 # 2. Delete buyer reviews, platform earnings, payment otps, receipts (and items), buyer addresses, return requests directly, cart
                 try:
@@ -1197,15 +1230,39 @@ async def fa_delete_user(target_user_id: str, request: FastAPIRequest):
                         "DELETE FROM receipt_items WHERE receipt_id IN (SELECT id FROM receipts WHERE buyer_id = %s)",
                         (target_user_id,)
                     )
+                except Exception as e:
+                    print(f"Error deleting buyer receipt_items: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM receipts WHERE buyer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting buyer receipts: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM buyer_reviews WHERE buyer_id = %s", (target_user_id,))
-                    BaseModel.execute_query("DELETE FROM platform_earnings WHERE buyer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting buyer buyer_reviews: {e}")
+                try:
+                    BaseModel.execute_query(
+                        "DELETE FROM platform_earnings WHERE buyer_id = %s OR order_id IN (SELECT id FROM orders WHERE buyer_id = %s)",
+                        (target_user_id, target_user_id)
+                    )
+                except Exception as e:
+                    print(f"Error deleting buyer platform_earnings: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM payment_otps WHERE buyer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting buyer payment_otps: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM buyer_addresses WHERE buyer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting buyer buyer_addresses: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM return_requests WHERE buyer_id = %s", (target_user_id,))
+                except Exception as e:
+                    print(f"Error deleting buyer return_requests: {e}")
+                try:
                     BaseModel.execute_query("DELETE FROM cart WHERE buyer_id = %s", (target_user_id,))
                 except Exception as e:
-                    print(f"Error deleting buyer platform dependents: {e}")
+                    print(f"Error deleting buyer cart: {e}")
 
                 # 3. Delete payments associated with buyer orders
                 try:
