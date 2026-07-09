@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
-import { farmerAPI, weatherAPI } from '../../services/api';
+import { farmerAPI, weatherAPI, checkoutAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 import SellerLayout from './SellerLayout';
 import PremiumWeatherWidget from '../../components/PremiumWeatherWidget';
@@ -74,7 +74,7 @@ export default function FarmerDashboard() {
     // Fetch all data in parallel for speed
     const [productsRes, ordersRes, earningsRes] = await Promise.allSettled([
       farmerAPI.getProducts(1, 100),
-      farmerAPI.getOrders(1, 100),
+      checkoutAPI.getFarmerOrders(),
       farmerAPI.getEarnings(),
     ]);
 
@@ -83,23 +83,41 @@ export default function FarmerDashboard() {
       prods = Array.isArray(prodData) ? prodData : (prodData.products || prodData.data || []);
     }
     if (ordersRes.status === 'fulfilled') {
-      const ordersList = ordersRes.value.data?.orders || ordersRes.value.data?.data || ordersRes.value.data || [];
+      const ordersList = ordersRes.value.data?.orders || ordersRes.value.data?.data || [];
       ordersArr = Array.isArray(ordersList) ? ordersList : [];
     }
     if (earningsRes.status === 'fulfilled') {
       earnings = earningsRes.value.data || {};
     }
 
+    const deliveredOrders = ordersArr.filter(o => o.order_status === 'DELIVERED');
+    const totalEarnings = deliveredOrders.reduce((sum, o) => sum + parseFloat(o.subtotal || 0), 0);
+    
+    // Calculate current month earnings
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    const thisMonthEarnings = deliveredOrders
+      .filter(o => {
+        if (!o.created_at) return false;
+        const d = new Date(o.created_at);
+        return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      })
+      .reduce((sum, o) => sum + parseFloat(o.subtotal || 0), 0);
+
+    const pendingEarnings = ordersArr
+      .filter(o => ['PLACED', 'CONFIRMED', 'ACCEPTED', 'PACKED', 'OUT_FOR_DELIVERY'].includes(o.order_status))
+      .reduce((sum, o) => sum + parseFloat(o.subtotal || 0), 0);
+
     const newStats = {
       products: prods.length,
       orders: ordersArr.length,
-      pendingOrders: ordersArr.filter(o => o.status === 'pending').length,
-      activeOrders: ordersArr.filter(o => ['confirmed','processing','packed','dispatched','in_transit','out_for_delivery'].includes(o.status)).length,
-      deliveredOrders: ordersArr.filter(o => o.status === 'delivered').length,
-      earnings: earnings.total || 0,
-      thisMonth: earnings.thisMonth || 0,
-      pending: earnings.pending || 0,
-      rating: earnings.rating || 0,
+      pendingOrders: ordersArr.filter(o => ['PLACED', 'CONFIRMED'].includes(o.order_status)).length,
+      activeOrders: ordersArr.filter(o => ['ACCEPTED', 'PACKED', 'OUT_FOR_DELIVERY'].includes(o.order_status)).length,
+      deliveredOrders: deliveredOrders.length,
+      earnings: totalEarnings,
+      thisMonth: thisMonthEarnings,
+      pending: pendingEarnings,
+      rating: earnings.rating || 4.8,
     };
     setStats(newStats);
 
@@ -109,14 +127,19 @@ export default function FarmerDashboard() {
     setTopProducts(newTopProducts);
 
     // Build activity feed from orders
-    const activities = ordersArr.slice(0, 6).map(o => ({
-      id: o.id || o._id,
-      text: o.status === 'pending' ? `New order <strong>#${o.id || o._id}</strong> for ${o.product_name || 'a product'}`
-           : o.status === 'delivered' ? `Order <strong>#${o.id || o._id}</strong> delivered successfully`
-           : `Order <strong>#${o.id || o._id}</strong> is ${o.status}`,
-      time: o.created_at ? new Date(o.created_at).toLocaleDateString() : 'Recently',
-      color: o.status === 'pending' ? 'amber' : o.status === 'delivered' ? 'green' : 'blue',
-    }));
+    const activities = ordersArr.slice(0, 6).map(o => {
+      const isPending = ['PLACED', 'CONFIRMED'].includes(o.order_status);
+      const isDelivered = o.order_status === 'DELIVERED';
+      const statusLabel = o.order_status ? o.order_status.toLowerCase().replace(/_/g, ' ') : 'processed';
+      return {
+        id: o.id || o._id,
+        text: isPending ? `New order <strong>#${o.id || o._id}</strong> for ${o.product_name || 'a product'}`
+             : isDelivered ? `Order <strong>#${o.id || o._id}</strong> delivered successfully`
+             : `Order <strong>#${o.id || o._id}</strong> is ${statusLabel}`,
+        time: o.created_at ? new Date(o.created_at).toLocaleDateString() : 'Recently',
+        color: isPending ? 'amber' : isDelivered ? 'green' : 'blue',
+      };
+    });
     if (activities.length === 0) {
       activities.push(
         { id: 'w1', text: 'Welcome to <strong>SmartFarmer</strong>! Start by adding products.', time: 'Just now', color: 'green' },
