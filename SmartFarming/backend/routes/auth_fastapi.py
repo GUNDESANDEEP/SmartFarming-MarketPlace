@@ -592,3 +592,64 @@ async def generic_signup(request: SignupRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Signup failed: {str(e)}"
         )
+
+
+# ============================================================================
+# NOTIFICATIONS ENDPOINTS
+# ============================================================================
+
+@auth_router.get("/notifications")
+async def get_notifications(user_id: str = Depends(get_current_user)):
+    """Get all notifications for the logged-in user, sorted by newest first"""
+    try:
+        notifications = BaseModel.execute_query(
+            "SELECT * FROM notifications WHERE user_id = %s ORDER BY created_at DESC LIMIT 50",
+            (int(user_id),),
+            fetch_all=True
+        ) or []
+        serialized = []
+        for n in notifications:
+            serialized.append({
+                'id': n['id'],
+                'user_id': n['user_id'],
+                'title': n['title'],
+                'message': n['message'],
+                'type': n.get('type', 'info'),
+                'is_read': bool(n.get('is_read', False)),
+                'action_url': n.get('action_url'),
+                'created_at': n['created_at'].isoformat() if n.get('created_at') else None,
+                'read_at': n['read_at'].isoformat() if n.get('read_at') else None,
+                'data': n.get('data')
+            })
+        return serialized
+    except Exception as e:
+        print(f"[ERR] get_notifications: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@auth_router.post("/notifications/read-all")
+async def mark_all_notifications_read(user_id: str = Depends(get_current_user)):
+    """Mark all notifications of the user as read"""
+    try:
+        BaseModel.execute_query(
+            "UPDATE notifications SET is_read = TRUE, read_at = CURRENT_TIMESTAMP WHERE user_id = %s AND is_read = FALSE",
+            (int(user_id),)
+        )
+        return {'success': True, 'message': 'All notifications marked as read'}
+    except Exception as e:
+        print(f"[ERR] mark_all_notifications_read: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@auth_router.post("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: int, user_id: str = Depends(get_current_user)):
+    """Mark a specific notification as read"""
+    try:
+        BaseModel.execute_query(
+            "UPDATE notifications SET is_read = TRUE, read_at = CURRENT_TIMESTAMP WHERE id = %s AND user_id = %s",
+            (notification_id, int(user_id))
+        )
+        return {'success': True, 'message': 'Notification marked as read'}
+    except Exception as e:
+        print(f"[ERR] mark_notification_read: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
