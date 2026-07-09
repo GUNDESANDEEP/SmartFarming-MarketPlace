@@ -492,6 +492,15 @@ async def internal_error(request, exc):
 # HEALTH CHECK
 # ============================================================================
 
+@app.get("/api/debug-git-log")
+async def debug_git_log():
+    import subprocess
+    try:
+        output = subprocess.check_output("git log -n 5 --oneline", shell=True, stderr=subprocess.STDOUT)
+        return {"git_log": output.decode('utf-8')}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/health")
 @app.get("/api/health")
 async def health_check():
