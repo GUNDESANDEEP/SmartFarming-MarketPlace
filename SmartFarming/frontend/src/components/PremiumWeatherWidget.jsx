@@ -19,11 +19,30 @@ export default function PremiumWeatherWidget({ defaultLocation = 'Hyderabad' }) 
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef(null);
 
+  const normalizeCityName = (name) => {
+    if (!name) return name;
+    const clean = name.trim().toLowerCase();
+    const map = {
+      'hnk': 'Hanamkonda',
+      'wgl': 'Warangal',
+      'hyd': 'Hyderabad',
+      'nzb': 'Nizamabad',
+      'krmr': 'Karimnagar',
+      'blr': 'Bangalore',
+      'gtr': 'Guntur',
+      'che': 'Chennai',
+      'del': 'Delhi',
+      'bom': 'Mumbai',
+    };
+    return map[clean] || name;
+  };
+
   // Load weather data
   const fetchWeather = async (targetCity, lat = null, lon = null) => {
     setLoading(true);
+    const normalizedCity = normalizeCityName(targetCity);
     try {
-      const res = await weatherAPI.getWeather(targetCity, lat, lon);
+      const res = await weatherAPI.getWeather(normalizedCity, lat, lon);
       const data = res.data;
       if (data && data.weather) {
         setWeather(data.weather);
