@@ -475,6 +475,101 @@ async def farmer_signup(request: FarmerSignupRequest):
         )
 
 
+
+@auth_router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register(request: FastAPIRequest):
+    """
+    Unified register endpoint for both Farmers and Buyers.
+    Frontend calls POST /api/auth/register for all registrations.
+    """
+    try:
+        data = await request.json()
+        role = data.get('role', 'buyer').strip().lower()
+        first_name = data.get('first_name', '').strip()
+        last_name = data.get('last_name', '').strip()
+        email = data.get('email', '').strip()
+        phone = data.get('phone', '').strip()
+        password = data.get('password', '')
+        location = data.get('location', '')
+        
+        from fastapi.responses import JSONResponse
+        
+        if not first_name:
+            return JSONResponse(content={'error': 'First name is required'}, status_code=400)
+        if not password or len(password) < 6:
+            return JSONResponse(content={'error': 'Password must be at least 6 characters'}, status_code=400)
+        
+        password_hash = generate_password_hash(password)
+        
+        if role == 'farmer':
+            if not email:
+                return JSONResponse(content={'error': 'Email required for farmer registration'}, status_code=400)
+            
+            existing = BaseModel.execute_query("SELECT id FROM farmers WHERE LOWER(email) = LOWER(%s)", (email,), fetch_one=True)
+            if existing:
+                return JSONResponse(content={'error': 'Email already registered'}, status_code=409)
+            
+            user_id = BaseModel.execute_insert(
+                """INSERT INTO farmers (first_name, last_name, email, phone, password_hash, location, created_at) 
+                   VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)""",
+                (first_name, last_name, email, phone, password_hash, location)
+            )
+            
+            # Create wallet
+            try:
+                BaseModel.execute_insert(
+                    "INSERT INTO wallet (farmer_id, balance, total_earnings) VALUES (%s, 0, 0)", (user_id,)
+                )
+            except Exception:
+                pass
+            
+        elif role == 'buyer':
+            if not phone:
+                return JSONResponse(content={'error': 'Phone required for buyer registration'}, status_code=400)
+            
+            existing = BaseModel.execute_query("SELECT id FROM buyers WHERE phone = %s", (phone,), fetch_one=True)
+            if existing:
+                return JSONResponse(content={'error': 'Phone number already registered'}, status_code=409)
+            
+            user_id = BaseModel.execute_insert(
+                """INSERT INTO buyers (first_name, last_name, email, phone, password_hash, location, buyer_id) 
+                   VALUES (%s, %s, %s, %s, %s, %s, NULL)""",
+                (first_name, last_name, email, phone, password_hash, location)
+            )
+            
+            BaseModel.execute_query("UPDATE buyers SET buyer_id = %s WHERE id = %s", (user_id, user_id))
+        else:
+            return JSONResponse(content={'error': 'Invalid role. Use farmer or buyer'}, status_code=400)
+        
+        access_token = create_access_token(
+            identity=str(user_id),
+            additional_claims={'role': role, 'user_id': user_id, 'type': role}
+        )
+        refresh_token = create_access_token(
+            identity=str(user_id),
+            additional_claims={'type': 'refresh'}
+        )
+        
+        return {
+            'message': 'Registration successful',
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'user': {
+                'id': user_id,
+                'name': f"{first_name} {last_name}".strip(),
+                'first_name': first_name,
+                'last_name': last_name,
+                'email': email,
+                'phone': phone,
+                'role': role,
+            }
+        }
+    except Exception as e:
+        print(f"Registration error: {e}")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(content={'error': str(e)}, status_code=500)
+
+
 # ============================================================================
 # GENERIC SIGNUP - Support both farmer and buyer signup
 # ============================================================================
